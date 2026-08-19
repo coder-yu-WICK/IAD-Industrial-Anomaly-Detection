@@ -1,0 +1,37 @@
+# ===== 数据（组委会提供，保密，严禁提交/泄露）=====
+data/
+datasets/
+*.tar
+*.zip
+*.7z
+
+# ===== 预训练权重 / checkpoint =====
+weights/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# ===== 输出 / 日志 =====
+outputs/
+logs/
+runs/
+wandb/
+*.log
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

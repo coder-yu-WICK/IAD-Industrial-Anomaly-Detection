@@ -1,0 +1,25 @@
+# ============================================================
+# 依赖清单 —— Python 3.12（两台机器统一）
+#
+# torch / torchvision 不放在这里装，因为两个平台安装命令不同：
+#   Mac (M4，无 CUDA):   pip install torch torchvision
+#   Windows (RTX 5070):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+# 正确顺序：先按上面的命令装好 torch，再执行
+#   pip install -r requirements.txt
+# ============================================================
+
+numpy
+scipy
+scikit-learn
+scikit-image
+opencv-python
+pillow
+timm>=0.9.0
+einops
+tqdm
+matplotlib
+pandas
+albumentations
+huggingface_hub
+omegaconf
