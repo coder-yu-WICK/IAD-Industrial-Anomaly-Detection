@@ -7,6 +7,15 @@
 
 ---
 
+## 文档导航
+
+| 文档 | 内容 |
+|---|---|
+| [docs/competition-analysis.md](docs/competition-analysis.md) | 赛题分析与规则拆解（评分、约束、接口、晋级规则） |
+| [docs/getting-started.md](docs/getting-started.md) | 赛前入门指南（术语、技术路线、14 天计划、分工） |
+
+---
+
 ## 目录结构
 
 ```
