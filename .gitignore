@@ -15,6 +15,7 @@ checkpoints/
 *.onnx
 
 # ===== 输出 / 日志 =====
+results/
 outputs/
 logs/
 runs/
