@@ -23,3 +23,10 @@ pandas
 albumentations
 huggingface_hub
 omegaconf
+
+# ONNX Runtime Inference
+onnx
+onnxruntime-gpu==1.19.0
+
+# Anomalib Tools
+anomalib==2.6.0
