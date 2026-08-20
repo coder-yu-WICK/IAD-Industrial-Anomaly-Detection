@@ -2,12 +2,18 @@
 将训练好的 PatchCore 模型导出为 ONNX 格式
 """
 
+import sys
 from pathlib import Path
-from anomalib.data import MVTecAD
+
+# 将仓库根目录加入 sys.path，保证 src 包可被导入
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.data.OMNIAD import OMNIAD
 from anomalib.models import Patchcore
 from anomalib.engine import Engine
 
 # config
+# TODO: 拿到 Omni-AD 数据后，替换为实际类别
 CATEGORY = "bottle"
 CKPT_PATH = "./results/Patchcore/MVTecAD/bottle/v2/weights/lightning/model.ckpt"
 EXPORT_ROOT = "./results/exported"
@@ -19,7 +25,7 @@ model = Patchcore(
     coreset_sampling_ratio=0.1,
 )
 
-datamodule = MVTecAD(
+datamodule = OMNIAD(
     category=CATEGORY,
     eval_batch_size=1,
     num_workers=0,

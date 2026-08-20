@@ -1,18 +1,24 @@
+import sys
+from pathlib import Path
+
+# 将仓库根目录加入 sys.path，保证 src 包可被导入
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
-from anomalib.data import MVTecAD
+from src.data.OMNIAD import OMNIAD
 from anomalib.models import Patchcore
 from anomalib.engine import Engine
 
+# TODO: 拿到 Omni-AD 数据后，替换为实际类别
 CATEGORY = "bottle"
 CKPT_PATH = "./results/Patchcore/MVTecAD/bottle/latest/weights/lightning/model.ckpt"
 OUTPUT_DIR = "./results/visulization"
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 MAX_SAMPLES = 20
 
-datamodule = MVTecAD(
+datamodule = OMNIAD(
     category=CATEGORY,
     eval_batch_size=1,
     num_workers=0,

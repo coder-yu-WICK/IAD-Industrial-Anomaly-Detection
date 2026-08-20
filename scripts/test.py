@@ -1,17 +1,24 @@
-from anomalib.data import MVTecAD
+import sys
+from pathlib import Path
+
+# 将仓库根目录加入 sys.path，保证 src 包可被导入
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.data.OMNIAD import OMNIAD
 from anomalib.models import Patchcore
 from anomalib.engine import Engine
 from lightning.pytorch import seed_everything
 
 seed_everything(42, workers=True)
 
+# TODO: 拿到 Omni-AD 数据后，替换为实际类别
 CATEGORY = "bottle"
 BATCH_SIZE = 16
 DEVICE = "auto"
 CKPT_PATH = "./results/Patchcore/MVTecAD/bottle/latest/weights/lightning/model.ckpt"
 
 # 数据预处理
-datamodule = MVTecAD(
+datamodule = OMNIAD(
     category=CATEGORY,
     eval_batch_size=BATCH_SIZE,
     num_workers=2,
