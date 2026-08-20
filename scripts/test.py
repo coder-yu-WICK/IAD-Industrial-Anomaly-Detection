@@ -9,6 +9,7 @@ from anomalib.models import Patchcore
 from anomalib.engine import Engine
 from anomalib.utils.config import update_config
 from lightning.pytorch import seed_everything
+from torchvision import transforms
 
 seed_everything(42, workers=True)
 
@@ -22,12 +23,19 @@ DEVICE = "auto"
 CKPT_PATH = None  # 例如 "./results/patchcore/mvtecad/bottle/weights/epoch_0.ckpt"
 
 # ==================== dataloader ====================
+# 与训练时保持一致的数据增强
+eval_transform = transforms.Compose([
+    transforms.Resize(IMAGE_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
 datamodule = MVTecAD(
     category=CATEGORY,
-    image_size=IMAGE_SIZE,
-    train_batch_size=BATCH_SIZE,
     eval_batch_size=BATCH_SIZE,
     num_workers=4,
+    val_augmentations=eval_transform,
+    test_augmentations=eval_transform,
 )
 
 model = Patchcore(
