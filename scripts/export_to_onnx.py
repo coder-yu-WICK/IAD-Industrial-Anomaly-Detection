@@ -14,8 +14,8 @@ EXPORT_ROOT = "./results/exported"
 EXPORT_TYPE = "onnx"
 
 model = Patchcore(
-    backbone="wide_resnet50_2",
-    layers=["layer2", "layer3"],
+    backbone="vit_base_patch16_224",
+    layers=["blocks.10", "blocks.11"],
     coreset_sampling_ratio=0.1,
 )
 
