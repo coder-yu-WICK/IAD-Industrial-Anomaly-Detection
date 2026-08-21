@@ -1,78 +1,53 @@
 # IAD - Industrial Anomaly Detection
 
-工业图像异常检测与定位 —— 基于无监督范式的算法实现。
+工业图像异常检测与定位（Omni-AD 校赛）——无监督方案提交包。
 
-> 竞赛环境：训练与推理统一在组委会提供的 AI 训练平台运行，最终提交 Docker 镜像。
-> 本仓库仅同步**代码与配置文件**；数据、权重、checkpoint 一律不入库（见 `.gitignore`）。
-
----
-
-## 文档导航
-
-| 文档 | 内容 |
-|---|---|
-| [docs/competition-analysis.md](docs/competition-analysis.md) | 赛题分析与规则拆解（评分、约束、接口、晋级规则） |
-| [docs/getting-started.md](docs/getting-started.md) | 赛前入门指南（术语、技术路线、14 天计划、分工） |
+> 本仓库即提交包内容（`model/` 中为训练产物，数据不入库）。正式评测在组委会 Linux/CUDA 环境**断网**运行，只调用 `src/train.py` 与 `src/predict.py`。
 
 ---
 
-## 目录结构
+## 方案概述
+
+- **方法**：PatchCore（对齐 anomalib 技术路线），无监督，只用各类别 `train/good` 正常样本。
+  - 主干 `wide_resnet50_2`，取 layer2 + layer3 特征拼接（多尺度），3×3 邻域聚合 → 1536 维 patch 特征。
+  - 每类正常样本建 memory bank，k-center greedy coreset 采样（`coreset_ratio=0.1`）。
+  - 推理：patch 特征与所属类别 bank 的最近邻 L2 距离 → 热图（上采样 + 高斯平滑 `sigma=4`）→ 压缩到 `[0,1]`。
+- **模型模式**：`hybrid`（共享主干 `shared.pth` + 每类 bank `checkpoints/<category>.pth`）。
+- **实现**：`src/patchcore/` 为 torch 原生实现，仅依赖 torch / torchvision / numpy / Pillow。
+
+## 提交包结构
 
 ```
-IAD-Industrial-Anomaly-Detection/
-├── README.md            # 本文件
-├── requirements.txt     # 依赖清单（torch 除外，按平台单独装）
-├── environment.yml      # conda 环境（Python 3.12）
-├── .gitignore           # 排除数据/权重/日志
-├── src/                 # 核心代码（模型、训练、推理、指标）
-├── configs/             # 实验配置（YAML）
-└── scripts/             # 启动/评测脚本
+TeamName.zip
+├── submission.json
+├── README.md
+├── requirements.lock
+├── report.pdf
+├── src/
+│   ├── train.py            # 统一训练入口（规范 §6）
+│   ├── predict.py          # 统一推理入口（规范 §7）
+│   └── patchcore/          # 模型实现（torch 原生）
+├── configs/
+│   └── default.json        # 默认配置（无绝对路径）
+├── model/
+│   ├── model_manifest.json
+│   ├── shared.pth          # 共享主干 state_dict
+│   ├── checkpoints/<category>.pth   # 每类 memory bank
+│   └── pretrained/wide_resnet50_2.pth  # ImageNet 权重（断网训练必需）
+├── pretrained_manifest.json          # 预训练权重来源与哈希
+└── third_party/
+    └── LICENSES.md
 ```
 
-## 环境安装
-
-两台机器统一 **Python 3.12**。先按平台装 torch，再装其余依赖。
-
-### 1) 装 PyTorch（按机器选一条）
+## 依赖安装
 
 ```bash
-# Mac (Apple M4，无 CUDA，仅本地冒烟测试)
-pip install torch torchvision
-
-# Windows (RTX 5070, Blackwell, CUDA ≥12.8)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.lock
 ```
 
-> ⚠️ RTX 5070 是 Blackwell（sm_120），必须用 **cu128 及以上**的 PyTorch；不要装 xformers（会强制降级 PyTorch）。
+仅 4 项：`torch` / `torchvision` / `numpy` / `Pillow`。torch 与 torchvision 由评测平台按 CUDA 环境提供，`requirements.lock` 为代码验证版本。
 
-### 2) 装其余依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3) 验证 GPU（Windows 上）
-
-```python
-import torch
-print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))
-```
-
-## 数据放置
-
-组委会提供的 Omni-AD 子集（正常样本训练集 + 开发测试集）放到本地 `data/` 目录，**该目录已被 gitignore，严禁提交**。
-
-```
-data/
-├── train/          # 正常样本（无监督训练）
-└── test/           # 开发测试集（含标注，本地评测用）
-```
-
-## 快速开始
-
-### 统一接口（校赛规范）
-
-训练（只读取 manifest 中的正常样本）：
+## 训练（规范 §6）
 
 ```bash
 python -u src/train.py \
@@ -82,7 +57,11 @@ python -u src/train.py \
   --device cuda:0 --seed 2026 --num-workers 4
 ```
 
-推理（输出 predictions.csv + maps/）：
+- 严格按 manifest 读取正常训练图像，不访问 test / ground_truth，支持任意类别子集。
+- 产物写入 `--output-dir`：`shared.pth` + `checkpoints/<category>.pth` + `model_manifest.json`，不覆盖提交包内原始 `model/`。
+- 预训练权重：`model/pretrained/wide_resnet50_2.pth` 随包存放，断网环境下直接加载；首次在联网开发机上运行会自动下载缓存到该位置。
+
+## 推理（规范 §7）
 
 ```bash
 python -u src/predict.py \
@@ -93,14 +72,12 @@ python -u src/predict.py \
   --device cuda:0 --num-workers 4
 ```
 
-产物格式：
+- 按 manifest 逐样本处理，不扫描完整数据目录；`--model-dir` 兼容提交包 `model/` 与 train.py 重训目录。
+- 产物：
+  - `predictions.csv`：`sample_id,image_score`（∈[0,1]）
+  - `maps/<sample_id>.png`：单通道 16-bit PNG（0~65535，/65535 得 [0,1] 分数），与原图同尺寸
 
-- `predictions.csv`：`sample_id,image_score`（∈[0,1]）
-- `maps/<sample_id>.png`：单通道 16-bit PNG（0~65535），与原图同尺寸
-
-模型方案：hybrid（共享主干 `shared.pth` + 每类 memory bank `checkpoints/<category>.pth`），对齐 anomalib PatchCore 技术路线（wide_resnet50_2 + layer2/3 + coreset）。
-
-### manifest 格式
+## manifest 格式（规范 §5）
 
 ```csv
 sample_id,category,image_path
@@ -109,8 +86,25 @@ ev_000001,air_conditioner_filter,eval_images/air_conditioner_filter/ev_000001.pn
 
 `image_path` 为相对 `--data-root` 的 POSIX 路径，UTF-8 编码。
 
-## 注意事项
+## 本地联调（开发用，不属于提交接口）
 
-- **代码 / 报告 / commit 信息中不要出现学校信息。**
-- 数据与预训练权重属于保密/受限资源，仅用于本赛题，不外传。
-- 方法采用无监督范式，仅允许使用通用预训练权重（ImageNet / DINOv3 / CLIP 等）。
+```bash
+python -u src/train.py --data-root <公开数据根> --manifest train_manifest.csv \
+  --output-dir work/model --device cpu --seed 2026 --num-workers 0
+python -u src/predict.py --data-root <公开数据根> --manifest eval_manifest.csv \
+  --model-dir work/model --output-dir work/predictions --device cpu --num-workers 0
+python src/evaluate.py --predictions-dir work/predictions \
+  --data-root <数据根> --manifest eval_manifest.csv
+```
+
+`src/evaluate.py` 输出官方指标（Image-level AP / F1-max、Pixel-level AP / F1-max / AUROC，宏平均），供调试，不入提交包。
+
+## 提交前自检（规范 §12）
+
+- [ ] `submission.json` 的 `team_id` 已改为组委会匿名编号
+- [ ] `model/` 为真实训练产物，`model/pretrained/` 是真实 ImageNet 权重（非占位）
+- [ ] `pretrained_manifest.json`、`third_party/LICENSES.md`、`report.pdf` 已补齐
+- [ ] zip 根目录直接含 `submission.json`，无嵌套目录
+- [ ] 代码 / 报告 / commit 中无学校信息、绝对路径、盘符
+- [ ] `predictions.csv` 与 `maps/` 数量完全一致
+- [ ] 在含中文和空格的目录中完成过一次完整训练+推理自检
