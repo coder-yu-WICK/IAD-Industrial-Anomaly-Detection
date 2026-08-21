@@ -1,0 +1,8 @@
+# 精确依赖锁定（Linux/CUDA 评测环境）
+# 提交代码实际仅 import：torch / torchvision / numpy / PIL（见 src/train.py、src/predict.py、src/patchcore/*）。
+# torch / torchvision 由评测平台按 CUDA 环境安装，此处为代码验证版本（本机 pip freeze 的 +cpu 后缀仅限 Windows 本地，已去除）。
+# 如需重新生成：在评测等价环境执行 python -m pip freeze 后仅保留以下条目。
+torch==2.12.0
+torchvision==0.27.0
+numpy==2.4.6
+pillow==11.3.0

@@ -1,4 +1,4 @@
-# ===== 数据（组委会提供，保密，严禁提交/泄露）=====
+# ===== 数据（组委会提供，保密）=====
 /data/
 datasets/
 *.tar
@@ -14,11 +14,16 @@ checkpoints/
 *.safetensors
 *.onnx
 
+# ===== 本地试验产物（不进提交包）=====
+src/anomalib/
+work/
+
 # ===== 输出 / 日志 =====
-results/
 outputs/
 logs/
 runs/
+results/
+work/
 wandb/
 *.log
 

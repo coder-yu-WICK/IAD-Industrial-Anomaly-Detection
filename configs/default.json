@@ -1,0 +1,11 @@
+{
+  "model_mode": "hybrid",
+  "backbone": "wide_resnet50_2",
+  "layers": ["layer2", "layer3"],
+  "input_size": [256, 256],
+  "crop_size": [224, 224],
+  "coreset_ratio": 0.1,
+  "sigma": 4.0,
+  "seed": 2026,
+  "score_range": [0.0, 1.0]
+}
