@@ -1,0 +1,10 @@
+{ 
+  "spec_version": "omniad-school-1.0", 
+  "team_id": "TeamName",  
+  "seed": 2026, 
+  "train_entry": "src/train.py", 
+  "predict_entry": "src/predict.py", 
+  "model_mode": "shared", 
+  "network_required": false, 
+  "external_iad_data_used": false
+}
