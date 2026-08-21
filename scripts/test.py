@@ -25,8 +25,8 @@ datamodule = OMNIAD(
 )
 
 model = Patchcore(
-    backbone="vit_base_patch16_224",
-    layers=["blocks.10", "blocks.11"],
+    backbone="wide_resnet50_2",
+    layers=["layer2", "layer3"],
     coreset_sampling_ratio=0.1,
 )
 
