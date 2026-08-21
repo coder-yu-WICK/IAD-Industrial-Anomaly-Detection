@@ -144,15 +144,24 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         writer.writerows(rows)
 
 
-def main() -> None:
-    args = parse_args()
-    root = args.data_root.resolve()
+def generate_manifests(data_root: str | Path, verbose: bool = True) -> tuple[int, int]:
+    """扫描 data_root 下所有类别，生成 train_manifest.csv 与 test_manifest.csv。
+
+    Args:
+        data_root: 数据根目录（含各类别子目录）。
+        verbose: 是否打印进度。默认 ``True``。
+
+    Returns:
+        (train 行数, test 行数)。
+    """
+    root = Path(data_root).resolve()
     if not root.is_dir():
         raise NotADirectoryError(f"--data-root 不存在: {root}")
 
     # 仅扫描一级子目录作为类别（.xlsx 等文件与非目录自然被排除）
     categories = sorted(p.name for p in root.iterdir() if p.is_dir())
-    print(f"[manifest] root={root} categories={len(categories)}", flush=True)
+    if verbose:
+        print(f"[manifest] root={root} categories={len(categories)}", flush=True)
 
     train_all: list[dict] = []
     test_all: list[dict] = []
@@ -160,18 +169,26 @@ def main() -> None:
         train_rows, test_rows = scan_category(root, category)
         train_all.extend(train_rows)
         test_all.extend(test_rows)
-        n_good = sum(not r["anomaly"] for r in test_rows)
-        n_anomaly = sum(r["anomaly"] for r in test_rows)
-        print(
-            f"[manifest] {category:<26} train={len(train_rows):>4} "
-            f"test_good={n_good:>4} test_anomaly={n_anomaly:>4}",
-            flush=True,
-        )
+        if verbose:
+            n_good = sum(not r["anomaly"] for r in test_rows)
+            n_anomaly = sum(r["anomaly"] for r in test_rows)
+            print(
+                f"[manifest] {category:<26} train={len(train_rows):>4} "
+                f"test_good={n_good:>4} test_anomaly={n_anomaly:>4}",
+                flush=True,
+            )
 
     write_csv(root / "train_manifest.csv", train_all, TRAIN_FIELDS)
     write_csv(root / "test_manifest.csv", test_all, TEST_FIELDS)
-    print(f"[manifest] done -> {root / 'train_manifest.csv'} ({len(train_all)} rows)", flush=True)
-    print(f"[manifest] done -> {root / 'test_manifest.csv'} ({len(test_all)} rows)", flush=True)
+    if verbose:
+        print(f"[manifest] done -> {root / 'train_manifest.csv'} ({len(train_all)} rows)", flush=True)
+        print(f"[manifest] done -> {root / 'test_manifest.csv'} ({len(test_all)} rows)", flush=True)
+    return len(train_all), len(test_all)
+
+
+def main() -> None:
+    args = parse_args()
+    generate_manifests(args.data_root)
 
 
 if __name__ == "__main__":
