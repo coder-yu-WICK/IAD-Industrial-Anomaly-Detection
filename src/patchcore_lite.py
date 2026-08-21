@@ -34,9 +34,19 @@ from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
 # 特征提取
 # ---------------------------------------------------------------------------
 
-def build_backbone(device: torch.device):
-    """加载 ImageNet 预训练 wide_resnet50_2，冻结，返回前向钩子句柄与特征缓存。"""
-    model = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.IMAGENET1K_V1)
+def build_backbone(device: torch.device, pretrained_path: Path | str | None = None):
+    """构建 wide_resnet50_2 主干并注册前向钩子，返回 (model, features)。
+
+    Args:
+        pretrained_path: 预训练权重文件路径。为 None 时返回随机初始化模型
+            （评测环境断网时由调用方从随包权重加载，见 predict.py）。
+    """
+    model = wide_resnet50_2(weights=None)  # 不联网下载
+    if pretrained_path is not None:
+        state = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+        if "state_dict" in state:
+            state = state["state_dict"]
+        model.load_state_dict(state)
     model = model.to(device)
     model.eval()
 
@@ -177,8 +187,6 @@ def predict_image(
     device: torch.device,
 ) -> tuple[float, np.ndarray]:
     """单图推理，返回 (image_score ∈ [0,1], anomaly_map ∈ [0,1] 同原图尺寸)。"""
-    from sklearn.neighbors import NearestNeighbors
-
     bank = torch.from_numpy(np.asarray(bank_dict["bank"])).to(device)
     norm_scale = float(bank_dict.get("norm_scale") or 1.0)
     target_size = bank_dict.get("target_size")
@@ -191,16 +199,13 @@ def predict_image(
     h, w = patch_feats.shape[-2:]
     q = patch_feats.reshape(patch_feats.shape[0], -1).T  # (h*w, C)
 
-    # 最近邻距离（分块算，控制峰值显存；阈值按字节估算）
-    n_q, n_b, c = q.shape[0], bank.shape[0], q.shape[1]
-    if n_q * n_b * c * 4 < 2e9:  # cdist 中间结果 < 2GB
-        d = torch.cdist(q, bank)
-        dist = d.min(dim=1).values
-    else:
-        nn = NearestNeighbors(n_neighbors=1, algorithm="auto", n_jobs=-1)
-        nn.fit(bank.cpu().numpy())
-        dist_np, _ = nn.kneighbors(q.cpu().numpy())
-        dist = torch.from_numpy(dist_np[:, 0]).to(device)
+    # 最近邻距离：GPU 分块 cdist，控制距离矩阵峰值显存
+    chunk = 1024
+    dist_chunks = []
+    for i in range(0, q.shape[0], chunk):
+        d = torch.cdist(q[i : i + chunk], bank)  # (chunk, n_b)
+        dist_chunks.append(d.min(dim=1).values)
+    dist = torch.cat(dist_chunks)
 
     score_map = dist.reshape(1, h, w)
 

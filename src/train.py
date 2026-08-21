@@ -65,6 +65,29 @@ def read_manifest(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+# 预训练权重随包存放（评测环境断网，禁止联网下载）
+PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "wide_resnet50_2.pth"
+
+
+def get_pretrained() -> Path:
+    """返回可用的预训练权重路径。
+
+    首次在联网开发机上运行时会下载并缓存到 model/pretrained/，
+    之后（含断网评测环境）直接读取本地文件。
+    """
+    if PRETRAINED_FILE.exists():
+        print(f"[train] 本地预训练权重: {PRETRAINED_FILE}", flush=True)
+        return PRETRAINED_FILE
+
+    print("[train] 未找到本地预训练权重，联网下载并缓存到 model/pretrained/ ...", flush=True)
+    from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
+
+    m = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.IMAGENET1K_V1)
+    PRETRAINED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"state_dict": m.state_dict()}, PRETRAINED_FILE)
+    return PRETRAINED_FILE
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
@@ -81,7 +104,7 @@ def main() -> None:
         )
 
     # 共享主干：离线加载必须把 state_dict 写入产物
-    model, features = build_backbone(device)
+    model, features = build_backbone(device, pretrained_path=get_pretrained())
     torch.save(
         {"state_dict": model.state_dict(), "seed": args.seed},
         args.output_dir / "shared.pth",
