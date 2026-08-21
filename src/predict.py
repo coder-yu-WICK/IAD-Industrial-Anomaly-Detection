@@ -29,11 +29,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from patchcore_lite import (
-    build_backbone,
-    load_category_ckpt,
-    predict_image,
-)
+from patchcore import PatchCore
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,16 +58,14 @@ def read_manifest(path: Path) -> list[dict]:
 
 def load_model(model_dir: Path, device: torch.device):
     """加载共享主干 + 按类别懒加载 memory bank。"""
-    model, features = build_backbone(device)
+    model = PatchCore(device=device)
 
     shared = model_dir / "shared.pth"
     if not shared.exists():
         raise FileNotFoundError(
             f"模型目录缺少 shared.pth: {model_dir}（请检查 --model-dir）"
         )
-    ckpt = torch.load(shared, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["state_dict"])
-    model.eval()
+    model.load_shared(shared)
 
     banks: dict[str, dict] = {}
 
@@ -82,18 +76,21 @@ def load_model(model_dir: Path, device: torch.device):
                 raise FileNotFoundError(
                     f"缺少类别 {category} 的模型文件: {ckpt_path}"
                 )
-            banks[category] = load_category_ckpt(ckpt_path)
+            banks[category] = model.load_category(ckpt_path)
         return banks[category]
 
-    return model, features, get_bank
+    return model, get_bank
 
 
 def save_map_uint16(path: Path, anomaly_map: np.ndarray) -> None:
-    """保存单通道 16-bit PNG（0~65535，与原图同尺寸）。"""
+    """保存单通道 16-bit PNG（0~65535，与原图同尺寸）。
+
+    ``Image.fromarray`` 对 uint16 自动推断为 I;16（不传 mode，避免 Pillow 13 移除参数）。
+    """
     from PIL import Image
 
     u16 = np.clip(np.round(np.asarray(anomaly_map, dtype=np.float32) * 65535.0), 0, 65535).astype(np.uint16)
-    Image.fromarray(u16, mode="I;16").save(path)
+    Image.fromarray(u16).save(path)
 
 
 def main() -> None:
@@ -106,12 +103,9 @@ def main() -> None:
     maps_dir.mkdir(exist_ok=True)
 
     samples = read_manifest(args.manifest)
-    model, features, get_bank = load_model(args.model_dir, device)
+    model, get_bank = load_model(args.model_dir, device)
 
     from PIL import Image
-    from torchvision import transforms
-
-    to_tensor = transforms.ToTensor()
 
     predictions: list[tuple[str, float]] = []
     for sample in samples:
@@ -120,15 +114,12 @@ def main() -> None:
         image_path = args.data_root / sample["image_path"]
 
         img = Image.open(image_path).convert("RGB")
-        image = to_tensor(img).to(device)
+        get_bank(category)
+        pred = model.predict(img)
 
-        score, anomaly_map = predict_image(
-            model, features, image, get_bank(category), device
-        )
-
-        save_map_uint16(maps_dir / f"{sample_id}.png", anomaly_map)
-        predictions.append((sample_id, score))
-        print(f"[predict] {sample_id} ({category}) score={score:.6f}", flush=True)
+        save_map_uint16(maps_dir / f"{sample_id}.png", pred.anomaly_map)
+        predictions.append((sample_id, pred.image_score))
+        print(f"[predict] {sample_id} ({category}) score={pred.image_score:.6f}", flush=True)
 
     # predictions.csv
     with (args.output_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as f:

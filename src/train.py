@@ -31,12 +31,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from patchcore_lite import (
-    build_backbone,
-    build_bank,
-    save_category_ckpt,
-    save_manifest,
-)
+from patchcore import PatchCore, write_manifest
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,22 +99,21 @@ def main() -> None:
         )
 
     # 共享主干：离线加载必须把 state_dict 写入产物
-    model, features = build_backbone(device, pretrained_path=get_pretrained())
-    torch.save(
-        {"state_dict": model.state_dict(), "seed": args.seed},
-        args.output_dir / "shared.pth",
-    )
+    model = PatchCore(device=device, pretrained_path=get_pretrained())
+    model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
 
     categories = sorted(by_category.keys())
     for category in categories:
         paths = by_category[category]
         print(f"[train] category={category} samples={len(paths)}", flush=True)
-        bank_dict = build_bank(model, features, paths, device)
-        save_category_ckpt(
-            args.output_dir / "checkpoints" / f"{category}.pth", bank_dict, category
+        bank_dict = model.fit(paths)
+        model.save_category(
+            args.output_dir / "checkpoints" / f"{category}.pth",
+            category=category,
+            bank_dict=bank_dict,
         )
 
-    save_manifest(args.output_dir, categories, model_mode="hybrid")
+    write_manifest(args.output_dir, categories, model_mode="hybrid")
     print(f"[train] done -> {args.output_dir}", flush=True)
 
 

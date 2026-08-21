@@ -3,10 +3,9 @@
 
 """本地评测脚本（开发用，不属于提交接口）。
 
-按校赛规范计算指标：按类别计算
-    Image-level AP / AUROC / F1-max
-    Pixel-level AP / AUROC / F1-max
-再对类别做宏平均。
+按校赛规范（§8.3）官方指标计算，按类别计算再宏平均：
+    Image-level AP / F1-max
+    Pixel-level AP / F1-max / AUROC
 
 用法::
 
@@ -78,6 +77,11 @@ def f1_max(scores: np.ndarray, labels: np.ndarray) -> float:
     return best
 
 
+def ap_score(labels: np.ndarray, scores: np.ndarray) -> float:
+    """AP；单类别（无正样本）时无定义，返回 nan 不参与宏平均。"""
+    return average_precision_score(labels, scores) if len(set(labels)) > 1 else float("nan")
+
+
 def main() -> None:
     args = parse_args()
     samples = read_manifest(args.manifest)
@@ -97,30 +101,29 @@ def main() -> None:
         per_cat[cat]["pixel_score"].append(score_map.ravel())
         per_cat[cat]["pixel_label"].append(mask.ravel())
 
-    print(f"{'类别':<24}{'I-AP':>8}{'I-AUC':>8}{'I-F1':>8}{'P-AP':>8}{'P-AUC':>8}{'P-F1':>8}")
-    agg = {"I-AP": [], "I-AUC": [], "I-F1": [], "P-AP": [], "P-AUC": [], "P-F1": []}
+    print(f"{'类别':<24}{'I-AP':>8}{'I-F1':>8}{'P-AP':>8}{'P-F1':>8}{'P-AUC':>8}")
+    agg = {"I-AP": [], "I-F1": [], "P-AP": [], "P-F1": [], "P-AUC": []}
     for cat in sorted(per_cat):
         d = per_cat[cat]
         im_s = np.array(d["image_score"]); im_l = np.array(d["image_label"])
         px_s = np.concatenate(d["pixel_score"]); px_l = np.concatenate(d["pixel_label"])
 
-        i_ap = average_precision_score(im_l, im_s)
-        i_auc = roc_auc_score(im_l, im_s) if len(set(im_l)) > 1 else float("nan")
+        i_ap = ap_score(im_l, im_s)
         i_f1 = f1_max(im_s, im_l)
         p_ap = average_precision_score(px_l, px_s)
-        p_auc = roc_auc_score(px_l, px_s)
         p_f1 = f1_max(px_s, px_l)
+        p_auc = roc_auc_score(px_l, px_s)
 
-        agg["I-AP"].append(i_ap); agg["I-AUC"].append(i_auc)
-        agg["I-F1"].append(i_f1); agg["P-AP"].append(p_ap)
-        agg["P-AUC"].append(p_auc); agg["P-F1"].append(p_f1)
+        agg["I-AP"].append(i_ap); agg["I-F1"].append(i_f1)
+        agg["P-AP"].append(p_ap); agg["P-F1"].append(p_f1)
+        agg["P-AUC"].append(p_auc)
 
-        print(f"{cat:<24}{i_ap:8.4f}{i_auc:8.4f}{i_f1:8.4f}{p_ap:8.4f}{p_auc:8.4f}{p_f1:8.4f}")
+        print(f"{cat:<24}{i_ap:8.4f}{i_f1:8.4f}{p_ap:8.4f}{p_f1:8.4f}{p_auc:8.4f}")
 
     print("-" * 72)
-    print(f"{'宏平均':<22}{np.nanmean(agg['I-AP']):8.4f}{np.nanmean(agg['I-AUC']):8.4f}"
-          f"{np.nanmean(agg['I-F1']):8.4f}{np.nanmean(agg['P-AP']):8.4f}"
-          f"{np.nanmean(agg['P-AUC']):8.4f}{np.nanmean(agg['P-F1']):8.4f}")
+    print(f"{'宏平均':<22}{np.nanmean(agg['I-AP']):8.4f}{np.nanmean(agg['I-F1']):8.4f}"
+          f"{np.nanmean(agg['P-AP']):8.4f}{np.nanmean(agg['P-F1']):8.4f}"
+          f"{np.nanmean(agg['P-AUC']):8.4f}")
 
 
 if __name__ == "__main__":
