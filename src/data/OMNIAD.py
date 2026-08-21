@@ -24,6 +24,24 @@ TRAIN_MANIFEST = "train_manifest.csv"
 TEST_MANIFEST = "test_manifest.csv"
 
 
+def ensure_manifests(data_root: Path | str) -> None:
+    """确保 train/test manifest 存在，缺失时调用 sample_manifest 生成。"""
+    root = Path(data_root)
+    if all((root / m).exists() for m in (TRAIN_MANIFEST, TEST_MANIFEST)):
+        return
+    if not root.is_dir():
+        raise NotADirectoryError(f"--data-root 不存在: {root}")
+    logger.info("[OMNIAD] manifest 缺失，调用 sample_manifest.generate_manifests 生成 ...")
+    sample_manifest.generate_manifests(root)
+
+
+def list_categories(data_root: Path | str) -> list[str]:
+    """返回 data_root 下全部类别（缺 manifest 时自动生成），无需构造 datamodule，便于逐类循环训练。"""
+    ensure_manifests(data_root)
+    df = pd.read_csv(Path(data_root) / TRAIN_MANIFEST, encoding="utf-8-sig")
+    return sorted(df["category"].astype(str).str.strip().unique().tolist())
+
+
 def make_omniad_samples(
     root: Path | str,
     manifest: str,
@@ -134,13 +152,7 @@ class OMNIAD(AnomalibDataModule):
         self.task_type = TaskType(task) if isinstance(task, str) else task  # 基类 task 为只读属性
 
     def _ensure_manifests(self) -> None:
-        """manifest 缺失时直接调用 sample_manifest 生成。"""
-        if all((self.root / m).exists() for m in (TRAIN_MANIFEST, TEST_MANIFEST)):
-            return
-        if not self.root.is_dir():
-            raise NotADirectoryError(f"--data-root 不存在: {self.root}")
-        logger.info("[OMNIAD] manifest 缺失，调用 sample_manifest.generate_manifests 生成 ...")
-        sample_manifest.generate_manifests(self.root)
+        ensure_manifests(self.root)
 
     def prepare_data(self) -> None:
         self._ensure_manifests()
@@ -153,6 +165,4 @@ class OMNIAD(AnomalibDataModule):
     @property
     def categories(self) -> list[str]:
         """全部类别（train_manifest 去重排序），便于逐类循环训练。"""
-        self._ensure_manifests()
-        df = pd.read_csv(self.root / TRAIN_MANIFEST, encoding="utf-8-sig")
-        return sorted(df["category"].astype(str).str.strip().unique().tolist())
+        return list_categories(self.root)
