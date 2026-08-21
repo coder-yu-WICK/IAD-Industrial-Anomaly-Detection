@@ -1,0 +1,14 @@
+{
+  "format_version": "omniad-school-pretrained-1.0",
+  "entries": [
+    {
+      "name": "wide_resnet50_2_imagenet1k",
+      "description": "TorchVision Wide ResNet50_2 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
+      "source_url": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
+      "sha256": "deece3e917e6b4cd13b82e1543391a6b066042760b56fcfc28ccb52e76ba2b93",
+      "local_path": "model/pretrained/wide_resnet50_2.pth",
+      "license": "BSD-3-Clause",
+      "usage": "src/train.py 初始化 PatchCore 共享主干（src/patchcore/backbone.py），仅作特征提取器，训练阶段冻结"
+    }
+  ]
+}
