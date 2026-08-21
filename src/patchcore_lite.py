@@ -127,7 +127,7 @@ def build_bank(
     all_feats = torch.cat([f.reshape(f.shape[0], -1).T for f in all_features], dim=0)
 
     # 控制全量规模：过多 patch 先均匀随机子采样（保证 coreset 可训练）
-    max_embed = 5000
+    max_embed = 10000
     if all_feats.shape[0] > max_embed:
         perm = torch.randperm(all_feats.shape[0])[:max_embed]
         all_feats = all_feats[perm]
