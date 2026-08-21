@@ -1,5 +1,5 @@
-# ===== 数据（组委会提供，保密，严禁提交/泄露）=====
-/data/
+# ===== 数据（组委会提供，保密）=====
+data/
 datasets/
 *.tar
 *.zip
@@ -15,10 +15,11 @@ checkpoints/
 *.onnx
 
 # ===== 输出 / 日志 =====
-results/
 outputs/
 logs/
 runs/
+results/
+work/
 wandb/
 *.log
 

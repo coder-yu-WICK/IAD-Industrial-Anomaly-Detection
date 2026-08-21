@@ -70,7 +70,44 @@ data/
 
 ## 快速开始
 
-待 baseline 代码落地后补充。
+### 统一接口（校赛规范）
+
+训练（只读取 manifest 中的正常样本）：
+
+```bash
+python -u src/train.py \
+  --data-root <训练数据根目录> \
+  --manifest <train_manifest.csv> \
+  --output-dir <模型输出目录> \
+  --device cuda:0 --seed 2026 --num-workers 4
+```
+
+推理（输出 predictions.csv + maps/）：
+
+```bash
+python -u src/predict.py \
+  --data-root <测试数据根目录> \
+  --manifest <eval_manifest.csv> \
+  --model-dir <模型目录> \
+  --output-dir <预测输出目录> \
+  --device cuda:0 --num-workers 4
+```
+
+产物格式：
+
+- `predictions.csv`：`sample_id,image_score`（∈[0,1]）
+- `maps/<sample_id>.png`：单通道 16-bit PNG（0~65535），与原图同尺寸
+
+模型方案：hybrid（共享主干 `shared.pth` + 每类 memory bank `checkpoints/<category>.pth`），对齐 anomalib PatchCore 技术路线（wide_resnet50_2 + layer2/3 + coreset）。
+
+### manifest 格式
+
+```csv
+sample_id,category,image_path
+ev_000001,air_conditioner_filter,eval_images/air_conditioner_filter/ev_000001.png
+```
+
+`image_path` 为相对 `--data-root` 的 POSIX 路径，UTF-8 编码。
 
 ## 注意事项
 
