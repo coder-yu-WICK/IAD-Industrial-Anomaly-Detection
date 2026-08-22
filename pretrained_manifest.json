@@ -1,0 +1,14 @@
+{
+  "format_version": "omniad-school-pretrained-1.0",
+  "entries": [
+    {
+      "name": "vit_b_16_imagenet1k",
+      "description": "TorchVision ViT-B/16 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
+      "source_url": "https://download.pytorch.org/models/vit_b_16-c867db91.pth",
+      "sha256": "3939cc674f88e1e234fc49244b05aa8fd75daa39b62d2a1e2f818ec098203904",
+      "local_path": "model/pretrained/vit_b_16.pth",
+      "license": "BSD-3-Clause",
+      "usage": "src/train.py 初始化 PatchCore 共享主干（src/patchcore/backbone.py），仅作特征提取器，训练阶段冻结"
+    }
+  ]
+}

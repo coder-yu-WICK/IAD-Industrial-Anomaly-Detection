@@ -61,7 +61,11 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
-PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "wide_resnet50_2.pth"
+PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
+
+# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
+BACKBONE = "vit_b_16"
+LAYERS = ("encoder.layers.2", "encoder.layers.3")
 
 
 def get_pretrained() -> Path:
@@ -75,9 +79,9 @@ def get_pretrained() -> Path:
         return PRETRAINED_FILE
 
     print("[train] 未找到本地预训练权重，联网下载并缓存到 model/pretrained/ ...", flush=True)
-    from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
+    from torchvision.models import vit_b_16, ViT_B_16_Weights
 
-    m = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.IMAGENET1K_V1)
+    m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
     PRETRAINED_FILE.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": m.state_dict()}, PRETRAINED_FILE)
     return PRETRAINED_FILE
@@ -99,7 +103,12 @@ def main() -> None:
         )
 
     # 共享主干：离线加载必须把 state_dict 写入产物
-    model = PatchCore(device=device, pretrained_path=get_pretrained())
+    model = PatchCore(
+        device=device,
+        backbone=BACKBONE,
+        layers=LAYERS,
+        pretrained_path=get_pretrained(),
+    )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
 
     categories = sorted(by_category.keys())

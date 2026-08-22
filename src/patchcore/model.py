@@ -41,8 +41,9 @@ class PatchCore:
 
     Args:
         device: 运行设备（cuda 或 cpu）。
-        backbone: 主干名，仅支持 wide_resnet50_2。
-        layers: 特征层，默认 layer2+layer3。
+        backbone: ``torchvision.models`` 中任意主干名，如 wide_resnet50_2 /
+            vit_base_patch16_224（默认 wide_resnet50_2）。
+        layers: 特征层名序列，如 ("layer2", "layer3") 或 ("blocks.10", "blocks.11")。
         coreset_ratio: coreset 采样比例。bank 大小 = ratio × patch 总数，
             直接决定推理最近邻查询速度（调低即加速）。默认 0.1（参考口径）。
         max_embed: 可选 patch 子采样安全阀；None（默认）= 全量采样。
@@ -64,11 +65,12 @@ class PatchCore:
         sigma: float = 4.0,
     ) -> None:
         self.device = device
+        self.backbone_name = backbone
         self.layers = tuple(layers)
         self.coreset_ratio = coreset_ratio
         self.max_embed = max_embed
         self.sigma = sigma
-        self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone)
+        self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone, layers=self.layers)
         self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.preprocess = PatchPreprocess(input_size, crop_size)
         self.bank_dict: dict | None = None
@@ -106,6 +108,8 @@ class PatchCore:
             "coreset_indices": coreset_indices,
             "norm_scale": norm_scale,
             "feature_dim": int(bank.shape[1]),
+            "backbone": self.backbone_name,
+            "layers": list(self.layers),
             "input_size": list(self.preprocess.input_size),
             "crop_size": list(self.preprocess.crop_size),
             "sigma": self.sigma,
@@ -156,13 +160,37 @@ class PatchCore:
     def load_category(self, path: Path) -> dict:
         data = torch.load(path, map_location="cpu", weights_only=False)
         self.bank_dict = data["bank_dict"]
+        # bank_dict 同样携带架构信息，双保险（与 shared.pth 一致时无操作）
+        backbone = self.bank_dict.get("backbone") or "wide_resnet50_2"
+        layers = tuple(self.bank_dict.get("layers") or ("layer2", "layer3"))
+        if backbone != self.backbone_name or layers != self.layers:
+            self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
+            self.backbone_name = backbone
+            self.layers = layers
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self._bank = None
         return self.bank_dict
 
     def save_shared(self, path: Path, seed: int) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"state_dict": self.backbone.state_dict(), "seed": seed}, path)
+        torch.save(
+            {
+                "state_dict": self.backbone.state_dict(),
+                "seed": seed,
+                "backbone": self.backbone_name,
+                "layers": list(self.layers),
+            },
+            path,
+        )
 
     def load_shared(self, path: Path) -> None:
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        # 架构信息随 ckpt 走，predict 端无需知道训练时的 backbone 名
+        backbone = ckpt.get("backbone") or "wide_resnet50_2"
+        layers = tuple(ckpt.get("layers") or ("layer2", "layer3"))
+        if backbone != self.backbone_name or layers != self.layers:
+            self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
+            self.backbone_name = backbone
+            self.layers = layers
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.backbone.load_state(ckpt["state_dict"])

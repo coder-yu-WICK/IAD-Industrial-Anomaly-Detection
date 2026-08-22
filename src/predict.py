@@ -57,8 +57,16 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 def load_model(model_dir: Path, device: torch.device):
-    """加载共享主干 + 按类别懒加载 memory bank。"""
-    model = PatchCore(device=device)
+    """加载共享主干 + 按类别懒加载 memory bank。
+
+    主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构），
+    此处默认值仅作回退，与 train.py 的 ViT 配置保持一致。
+    """
+    model = PatchCore(
+        device=device,
+        backbone="vit_b_16",
+        layers=("encoder.layers.2", "encoder.layers.3"),
+    )
 
     shared = model_dir / "shared.pth"
     if not shared.exists():

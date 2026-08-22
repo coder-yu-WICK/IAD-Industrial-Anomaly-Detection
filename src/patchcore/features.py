@@ -1,7 +1,7 @@
 # Copyright (C) 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""多尺度 patch 特征：layer2+layer3 对齐拼接 + 3×3 局部平均池化。"""
+"""多尺度 patch 特征：多个特征层对齐拼接 + 3×3 局部平均池化。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .backbone import PatchBackbone
 class PatchFeatureExtractor:
     """对单图提取 patch 特征 (C, h, w)。
 
-    流程同 PatchCore：layer3 上采样到 layer2 分辨率后按通道拼接，
+    流程同 PatchCore：各层上采样到第一层分辨率后按通道拼接，
     再做 3×3 平均池化（neighborhood aggregation）。
     """
 
