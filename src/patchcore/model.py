@@ -76,6 +76,7 @@ class PatchCore:
         self.bank_dict: dict | None = None
         self.image_threshold: float | None = None
         self._bank: MemoryBank | None = None
+        self.onnx = None  # 可选 OnnxBackbone；非 None 时 predict 走 ONNX 特征提取
 
     # ------------------------------------------------------------------ 训练
     def fit(self, image_paths: list[Path]) -> dict:
@@ -127,8 +128,17 @@ class PatchCore:
         preprocess = PatchPreprocess.from_dict(self.bank_dict)
         map_gen = AnomalyMapGenerator(sigma=self.bank_dict.get("sigma") or 4.0)
 
-        x = preprocess.encode(image).to(self.device)
-        patch = self.extractor(x)  # (C, h, w)
+        if self.onnx is not None:
+            # ONNX 路径：主干特征由 ONNX Runtime 提取，聚合逻辑与 PyTorch 一致
+            x_np = preprocess.encode(image).numpy()[None].astype("float32")  # (1,3,H,W)
+            named = {
+                name: torch.from_numpy(f).to(self.device)
+                for name, f in zip(self.layers, self.onnx(x_np))
+            }
+            patch = self.extractor.aggregate(named)  # (C, h, w)
+        else:
+            x = preprocess.encode(image).to(self.device)
+            patch = self.extractor(x)  # (C, h, w)
         h, w = patch.shape[-2:]
         q = patch.reshape(patch.shape[0], -1).T  # (h*w, C)
         dist = self._bank.nearest_dist(q)  # (h*w,)
@@ -194,3 +204,14 @@ class PatchCore:
             self.layers = layers
             self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.backbone.load_state(ckpt["state_dict"])
+
+    # ------------------------------------------------------------- ONNX 加速
+    def export_onnx(self, path: Path, input_size=(224, 224)) -> None:
+        """导出截断主干为 ONNX（输出为逐层特征，顺序 = self.layers）。"""
+        self.backbone.export_onnx(path, input_size=input_size)
+
+    def load_onnx(self, path: Path) -> None:
+        """加载 ONNX 主干；之后 predict 走 ONNX 特征提取（聚合逻辑不变）。"""
+        from .onnx import OnnxBackbone
+
+        self.onnx = OnnxBackbone(path)
