@@ -92,6 +92,24 @@ def main() -> None:
 
     print("[3/5] 前向一致性校验（黄金标准）：randn 输入，ours 与 ref 输出 allclose(atol=1e-4)")
     x = torch.randn(1, 3, args.img_size, args.img_size)
+
+    def _hook_cls(model):
+        """采集各阶段 CLS token：patch_embed 输出 + 每 block 输出（定位首个分叉层）。"""
+        obs: dict[str, torch.Tensor] = {}
+
+        def _mk(name):
+            def h(_m, _i, o):
+                if o.dim() == 3:
+                    obs[name] = o[0, 0].detach()
+            return h
+
+        model.patch_embed.register_forward_hook(_mk("embed"))
+        for i, blk in enumerate(model.blocks):
+            blk.register_forward_hook(_mk(f"block{i}"))
+        return obs
+
+    obs_ref = _hook_cls(ref)
+    obs_ours = _hook_cls(ours)
     pre_norm: dict[str, torch.Tensor] = {}
     ours.norm.register_forward_hook(lambda _m, inp, _o: pre_norm.__setitem__("x", inp[0].detach()))
     with torch.no_grad():
@@ -113,7 +131,16 @@ def main() -> None:
     d_pre = (pre_norm["x"][:, 0] - out_ref).abs().max().item()
     d = min(d_post, d_pre)
     if d > 1e-4:
-        raise SystemExit(f"前向不一致 min(|post-norm|={d_post:.4e}, |pre-norm|={d_pre:.4e}) > 1e-4")
+        print(f"  逐层 CLS max|diff|（首个分叉层定位）:")
+        for i in range(12):
+            name = f"block{i}"
+            dr, do = obs_ref[name], obs_ours[name]
+            if dr is not None and do is not None:
+                print(f"    {name:>8}: {(do - dr).abs().max().item():.3e}")
+        raise SystemExit(
+            f"前向不一致 min(|post-norm|={d_post:.4e}, |pre-norm|={d_pre:.4e}) > 1e-4；"
+            "结合逐层表定位首个分叉层后对照 vit.py 调整（常见：LayerNorm eps / SwiGLU 顺序 / 注意力数值路径）"
+        )
     print(f"  前向一致 ✓ (min|diff|={d:.2e})")
 
     print(f"[4/5] 打包到 {PRETRAINED}")

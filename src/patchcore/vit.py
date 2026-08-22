@@ -95,9 +95,9 @@ class Block(nn.Module):
 
     def __init__(self, dim: int = 768, num_heads: int = 12, mlp_hidden: int = 3072, mlp_fused: bool = False) -> None:
         super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
+        self.norm1 = nn.LayerNorm(dim, eps=1e-6)  # DINOv2/Franca 用 1e-6，非 PyTorch 默认 1e-5
         self.attn = Attention(dim, num_heads)
-        self.norm2 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         self.mlp = Mlp(dim, mlp_hidden, mlp_fused)
         self.ls1 = LayerScale(dim)
         self.ls2 = LayerScale(dim)
@@ -133,7 +133,7 @@ class DinoViT(nn.Module):
             self.register_tokens = nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, n_patches + n_extra, embed_dim))
         self.blocks = nn.ModuleList([Block(embed_dim, num_heads, mlp_hidden, mlp_fused) for _ in range(depth)])
-        self.norm = nn.LayerNorm(embed_dim)
+        self.norm = nn.LayerNorm(embed_dim, eps=1e-6)
         self._init_weights()
 
     def _init_weights(self) -> None:
