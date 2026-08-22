@@ -1,12 +1,13 @@
 # Copyright (C) 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""DINOv2 风格 ViT-B/14：加载 Franca 预训练主干（键名对齐 DINOv2 惯例）。
+"""DINOv2 风格 ViT-B/14：加载 Franca 预训练主干（键名对齐 Franca 命名空间）。
 
-Franca（CVPR 2026, arXiv:2507.14137）基于 DINOv2/iBOT 自监督框架，
-ViT-B/14 主干键名与 DINOv2 一致：``patch_embed.proj`` / ``blocks.N.attn.qkv`` /
-``blocks.N.mlp.fc1`` / ``blocks.N.ls1`` 等。运行时只加载本地打包权重
-（``model/pretrained/franca_vitb14.pth``），不联网。
+Franca（CVPR 2026, arXiv:2507.14137）基于 DINOv2/iBOT 自监督框架。实测其
+ViT-B/14 主干键名与标准 DINOv2 有三处不同（scripts/fetch_franca.py 已确认）：
+  - MLP 为 **SwiGLU**（``blocks.N.mlp.w12/w3``），非标准 ``fc1/fc2``；
+  - LayerScale 为带 ``gamma`` 参数的模块（``blocks.N.ls1.gamma``），非裸参数；
+  - 顶层多一个 iBOT ``mask_token``（训练用，推理不影响，仅加载对齐）。
 
 `blocks` 为 ``nn.ModuleList`` 属性，供 ``resolve_submodule("blocks.3")``
 按数字下标访问做前向钩子；输出为 3D token 序列，由 backbone 钩子重排为 2D 网格。
@@ -18,6 +19,7 @@ import math
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 
 class PatchEmbed(nn.Module):
@@ -36,7 +38,7 @@ class PatchEmbed(nn.Module):
 
 
 class Attention(nn.Module):
-    """多头自注意力，融合 qkv 线性层（DINOv2 键名 ``qkv``）。"""
+    """多头自注意力，融合 qkv 线性层（DINOv2/Franca 键名 ``qkv``）。"""
 
     def __init__(self, dim: int = 768, num_heads: int = 12) -> None:
         super().__init__()
@@ -54,34 +56,55 @@ class Attention(nn.Module):
         return self.proj(x)
 
 
-class Mlp(nn.Module):
-    """前馈网络 fc1 → GELU → fc2（隐藏维 4×dim）。"""
+class LayerScale(nn.Module):
+    """逐通道缩放（DINOv2/Franca 键名 ``gamma``）。"""
 
-    def __init__(self, in_features: int = 768, hidden: int = 3072) -> None:
+    def __init__(self, dim: int = 768) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(in_features, hidden)
-        self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden, in_features)
+        self.gamma = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.fc2(self.act(self.fc1(x)))
+        return x * self.gamma
+
+
+class Mlp(nn.Module):
+    """SwiGLU 前馈（Franca 键名 ``w12``/``w3``）。
+
+    fused=False（默认，标准 SwiGLU）：``w12`` 输出 2×hidden，切两半后
+    ``silu(前半)*后半`` 再经 ``w3`` 降维；fused=True 对应 xFormers fused 变体
+    （对 ``w12`` 整体 ``silu`` 后 ``w3`` 降维）。变体与隐藏维由
+    fetch_franca.py 按 ref 实际权重形状判定后传入，避免猜测。
+    """
+
+    def __init__(self, in_features: int = 768, hidden: int = 3072, fused: bool = False) -> None:
+        super().__init__()
+        self.fused = fused
+        self.w12 = nn.Linear(in_features, 2 * hidden)
+        self.w3 = nn.Linear(2 * hidden if fused else hidden, in_features)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x12 = self.w12(x)
+        if self.fused:
+            return self.w3(F.silu(x12))
+        x1, x2 = x12.chunk(2, dim=-1)
+        return self.w3(F.silu(x1) * x2)
 
 
 class Block(nn.Module):
     """Transformer block：norm1→attn→ls1 残差，norm2→mlp→ls2 残差。"""
 
-    def __init__(self, dim: int = 768, num_heads: int = 12, mlp_ratio: float = 4.0) -> None:
+    def __init__(self, dim: int = 768, num_heads: int = 12, mlp_hidden: int = 3072, mlp_fused: bool = False) -> None:
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.attn = Attention(dim, num_heads)
         self.norm2 = nn.LayerNorm(dim)
-        self.mlp = Mlp(dim, int(dim * mlp_ratio))
-        self.ls1 = nn.Parameter(torch.ones(dim))
-        self.ls2 = nn.Parameter(torch.ones(dim))
+        self.mlp = Mlp(dim, mlp_hidden, mlp_fused)
+        self.ls1 = LayerScale(dim)
+        self.ls2 = LayerScale(dim)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x + self.ls1 * self.attn(self.norm1(x))
-        x = x + self.ls2 * self.mlp(self.norm2(x))
+        x = x + self.ls1(self.attn(self.norm1(x)))
+        x = x + self.ls2(self.mlp(self.norm2(x)))
         return x
 
 
@@ -95,7 +118,8 @@ class DinoViT(nn.Module):
         embed_dim: int = 768,
         depth: int = 12,
         num_heads: int = 12,
-        mlp_ratio: float = 4.0,
+        mlp_hidden: int = 3072,
+        mlp_fused: bool = False,
         num_register_tokens: int = 0,
     ) -> None:
         super().__init__()
@@ -104,10 +128,11 @@ class DinoViT(nn.Module):
         n_patches = self.patch_embed.n_patches
         n_extra = 1 + num_register_tokens  # cls + 寄存器 token
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.mask_token = nn.Parameter(torch.zeros(1, embed_dim))  # iBOT 训练用，推理不参与
         if num_register_tokens:
             self.register_tokens = nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, n_patches + n_extra, embed_dim))
-        self.blocks = nn.ModuleList([Block(embed_dim, num_heads, mlp_ratio) for _ in range(depth)])
+        self.blocks = nn.ModuleList([Block(embed_dim, num_heads, mlp_hidden, mlp_fused) for _ in range(depth)])
         self.norm = nn.LayerNorm(embed_dim)
         self._init_weights()
 
@@ -139,7 +164,7 @@ class DinoViT(nn.Module):
         d = self.pos_embed.shape[-1]
         head, toks = pe[:, :num_extra], pe[:, num_extra:]
         toks = toks.transpose(1, 2).reshape(1, d, g, g)
-        toks = nn.functional.interpolate(toks, size=(grid, grid), mode="bicubic", align_corners=False)
+        toks = F.interpolate(toks, size=(grid, grid), mode="bicubic", align_corners=False)
         return torch.cat([head, toks.reshape(1, d, grid * grid).transpose(1, 2)], dim=1)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -154,14 +179,24 @@ class DinoViT(nn.Module):
         return self.norm(x)
 
 
-def build_franca_vitb14(img_size: int = 518, num_register_tokens: int = 0) -> DinoViT:
-    """Franca ViT-B/14 工厂（供 backbone.py 自定义主干注册表调用）。"""
+def build_franca_vitb14(
+    img_size: int = 518,
+    num_register_tokens: int = 0,
+    mlp_hidden: int | None = None,
+    mlp_fused: bool = False,
+) -> DinoViT:
+    """Franca ViT-B/14 工厂（供 backbone.py 自定义主干注册表调用）。
+
+    ``mlp_hidden``/``mlp_fused`` 由 fetch_franca.py 按 ref 实际权重形状判定后
+    传入；默认 3072 / chunked 为标准 SwiGLU（与 ViT-B 4× 扩张一致）。
+    """
     return DinoViT(
         img_size=img_size,
         patch_size=14,
         embed_dim=768,
         depth=12,
         num_heads=12,
-        mlp_ratio=4.0,
+        mlp_hidden=mlp_hidden if mlp_hidden is not None else 3072,
+        mlp_fused=mlp_fused,
         num_register_tokens=num_register_tokens,
     )
