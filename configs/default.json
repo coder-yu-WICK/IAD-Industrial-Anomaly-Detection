@@ -1,10 +1,17 @@
 {
   "model_mode": "hybrid",
-  "backbone": "vit_b_16",
-  "layers": ["encoder.layers.2", "encoder.layers.3"],
-  "input_size": [256, 256],
-  "crop_size": [224, 224],
+  "backbone": "franca_vitb14",
+  "layers": ["blocks.3", "blocks.6", "blocks.9"],
+  "cascade": {
+    "k1_ratio": 0.1,
+    "k2_ratio": 0.1,
+    "use_prefix_dist": false,
+    "prefix_dims": null
+  },
+  "input_size": [518, 518],
+  "crop_size": [518, 518],
   "coreset_ratio": 0.1,
+  "max_embed": 50000,
   "sigma": 4.0,
   "seed": 2026,
   "score_range": [0.0, 1.0]

@@ -8,10 +8,11 @@
 
 ## 方案概述
 
-- **方法**：PatchCore（对齐 anomalib 技术路线），无监督，只用各类别 `train/good` 正常样本。
-  - 主干 `vit_b_16`（torchvision 原生 ViT-B/16），取第 2、3 个 Transformer block 特征拼接，token 重排为网格 + 3×3 邻域聚合 → 1536 维 patch 特征。
-  - 每类正常样本建 memory bank，k-center greedy coreset 采样（`coreset_ratio=0.1`）。
-  - 推理：patch 特征与所属类别 bank 的最近邻 L2 距离 → 热图（上采样 + 高斯平滑 `sigma=4`）→ 压缩到 `[0,1]`。
+- **方法**：PatchCore（对齐 anomalib 技术路线）+ **级联剪枝多级检索**，无监督，只用各类别 `train/good` 正常样本。
+  - 主干 **Franca**（[valeoai/Franca](https://github.com/valeoai/Franca)，CVPR 2026）ViT-B/14，ImageNet-21K 自监督预训练（嵌套 matryoshka 聚类表征），权重随包离线加载，冻结。
+  - 取**浅/中/深**三层 Transformer block 特征（`blocks.3/6/9`，518 输入 → 37×37 token 网格），每层独立建 memory bank，coreset 在 concat 特征上选一次索引、同一索引应用到每层（跨层对齐）。
+  - **推理**：patch 特征与所属类别 bank 做**级联 top-k 剪枝检索**——浅层全量取最近邻 top10% → 中层子集取 top10% → 深层极小候选集取最近邻距离；逐级缩小候选集以降低计算复杂度，末层距离经高斯平滑热图压缩到 `[0,1]`。
+  - matryoshka 前缀维切片（`prefix_dims`）为可选降算开关，默认关闭（全维精确排序）。
 - **模型模式**：`hybrid`（共享主干 `shared.pth` + 每类 bank `checkpoints/<category>.pth`）。
 - **实现**：`src/patchcore/` 为 torch 原生实现，仅依赖 torch / torchvision / numpy / Pillow。
 
@@ -27,17 +28,22 @@ TeamName.zip
 │   ├── train.py            # 统一训练入口（规范 §6）
 │   ├── predict.py          # 统一推理入口（规范 §7）
 │   └── patchcore/          # 模型实现（torch 原生）
+│       ├── vit.py          # DINOv2 风格 ViT-B/14（加载 Franca 主干）
+│       ├── cascade.py      # 级联 top-k 剪枝多级检索
+│       └── ...
 ├── configs/
 │   └── default.json        # 默认配置（无绝对路径）
 ├── model/
 │   ├── model_manifest.json
 │   ├── shared.pth          # 共享主干 state_dict
-│   ├── checkpoints/<category>.pth   # 每类 memory bank
-│   └── pretrained/vit_b_16.pth         # ImageNet 权重（断网训练必需）
+│   ├── checkpoints/<category>.pth   # 每类多级 memory bank
+│   └── pretrained/franca_vitb14.pth  # Franca 权重（断网训练必需）
 ├── pretrained_manifest.json          # 预训练权重来源与哈希
 └── third_party/
     └── LICENSES.md
 ```
+
+`scripts/`（含 `fetch_franca.py`）为开发用一次性工具，**不进入提交 zip**。
 
 ## 依赖安装
 
@@ -59,7 +65,7 @@ python -u src/train.py \
 
 - 严格按 manifest 读取正常训练图像，不访问 test / ground_truth，支持任意类别子集。
 - 产物写入 `--output-dir`：`shared.pth` + `checkpoints/<category>.pth` + `model_manifest.json`，不覆盖提交包内原始 `model/`。
-- 预训练权重：`model/pretrained/vit_b_16.pth` 随包存放，断网环境下直接加载；首次在联网开发机上运行会自动下载缓存到该位置。
+- 预训练权重：`model/pretrained/franca_vitb14.pth` 随包存放，断网环境直接加载；缺失时明确报错（禁止联网下载）。该权重由联网开发机运行 `scripts/fetch_franca.py` 一次性生成。
 
 ## 推理（规范 §7）
 
@@ -102,8 +108,9 @@ python src/evaluate.py --predictions-dir work/predictions \
 ## 提交前自检（规范 §12）
 
 - [ ] `submission.json` 的 `team_id` 已改为组委会匿名编号
-- [ ] `model/` 为真实训练产物，`model/pretrained/` 是真实 ImageNet 权重（非占位）
-- [ ] `pretrained_manifest.json`、`third_party/LICENSES.md`、`report.pdf` 已补齐
+- [ ] `model/` 为真实训练产物，`model/pretrained/franca_vitb14.pth` 为真实权重且 `pretrained_manifest.json` 哈希已填
+- [ ] `pretrained_manifest.json` 的 `license` 与 `third_party/LICENSES.md` 已核实 Franca 许可证（非 TODO）
+- [ ] `report.pdf` 已补齐
 - [ ] zip 根目录直接含 `submission.json`，无嵌套目录
 - [ ] 代码 / 报告 / commit 中无学校信息、绝对路径、盘符
 - [ ] `predictions.csv` 与 `maps/` 数量完全一致

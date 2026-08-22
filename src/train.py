@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import random
 from pathlib import Path
 
@@ -61,30 +60,28 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
-PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
+PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "franca_vitb14.pth"
 
-# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
-BACKBONE = "vit_b_16"
-LAYERS = ("encoder.layers.2", "encoder.layers.3")
+# 主干配置：Franca（DINOv2 风格 ViT-B/14），浅/中/深级联检索层
+BACKBONE = "franca_vitb14"
+LAYERS = ("blocks.3", "blocks.6", "blocks.9")
+CASCADE_RATIOS = (0.1, 0.1)  # 浅层保留 top10% → 中层保留 top10% → 深层 min
+MAX_EMBED = 50000  # 518 网格 n≈315k，coreset 贪心 O(n·k·nc) 需封顶
 
 
 def get_pretrained() -> Path:
-    """返回可用的预训练权重路径。
+    """返回随包的 Franca 预训练权重路径。
 
-    首次在联网开发机上运行时会下载并缓存到 model/pretrained/，
-    之后（含断网评测环境）直接读取本地文件。
+    权重由实现期一次性脚本 ``scripts/fetch_franca.py`` 在联网开发机生成并
+    打包到 model/pretrained/；评测/复现环境断网，缺失即明确报错（禁止联网下载）。
     """
     if PRETRAINED_FILE.exists():
         print(f"[train] 本地预训练权重: {PRETRAINED_FILE}", flush=True)
         return PRETRAINED_FILE
-
-    print("[train] 未找到本地预训练权重，联网下载并缓存到 model/pretrained/ ...", flush=True)
-    from torchvision.models import vit_b_16, ViT_B_16_Weights
-
-    m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
-    PRETRAINED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": m.state_dict()}, PRETRAINED_FILE)
-    return PRETRAINED_FILE
+    raise FileNotFoundError(
+        f"缺少预训练权重 {PRETRAINED_FILE}；请在联网开发机运行 "
+        "`python scripts/fetch_franca.py` 生成后随包提交"
+    )
 
 
 def main() -> None:
@@ -107,6 +104,8 @@ def main() -> None:
         device=device,
         backbone=BACKBONE,
         layers=LAYERS,
+        cascade_ratios=CASCADE_RATIOS,
+        max_embed=MAX_EMBED,
         pretrained_path=get_pretrained(),
     )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
