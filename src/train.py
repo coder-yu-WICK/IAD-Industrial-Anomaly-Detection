@@ -123,6 +123,16 @@ def main() -> None:
         )
 
     write_manifest(args.output_dir, categories, model_mode="hybrid")
+
+    # ONNX 加速（可选）：训练末尾把截断主干导出为 .onnx，predict 端可用 onnxruntime 加速。
+    # 缺 onnx/onnxscript 时静默跳过（不影响 shared.pth 与每类 bank 的正常产出）。
+    try:
+        onnx_path = args.output_dir / "shared.onnx"
+        model.export_onnx(onnx_path, input_size=model.preprocess.crop_size)
+        print(f"[train] onnx -> {onnx_path}", flush=True)
+    except Exception as e:  # noqa: BLE001 —— 导出失败只降级，不中断训练
+        print(f"[train] onnx 导出跳过（{type(e).__name__}: {e}）", flush=True)
+
     print(f"[train] done -> {args.output_dir}", flush=True)
 
 

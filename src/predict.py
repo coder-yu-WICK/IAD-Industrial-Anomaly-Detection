@@ -75,6 +75,17 @@ def load_model(model_dir: Path, device: torch.device):
         )
     model.load_shared(shared)
 
+    # 优先 ONNX 加速；缺失 .onnx 或 onnxruntime 不可用时回退 PyTorch 主干
+    onnx_path = model_dir / "shared.onnx"
+    if onnx_path.exists():
+        try:
+            model.load_onnx(onnx_path)
+            print(f"[predict] 使用 ONNX 加速: {onnx_path}", flush=True)
+        except Exception as exc:  # onnxruntime 未安装 / 版本不兼容等
+            print(f"[predict] ONNX 加载失败({type(exc).__name__})，回退 PyTorch 推理", flush=True)
+    else:
+        print("[predict] 未找到 shared.onnx，使用 PyTorch 主干推理", flush=True)
+
     banks: dict[str, dict] = {}
 
     def get_bank(category: str) -> dict:
