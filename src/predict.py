@@ -60,12 +60,12 @@ def load_model(model_dir: Path, device: torch.device):
     """加载共享主干 + 按类别懒加载 memory bank。
 
     主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构），
-    此处默认值仅作回退，与 train.py 的 ResNet 配置保持一致。
+    此处默认值仅作回退，与 train.py 的 Swin 配置保持一致。
     """
     model = PatchCore(
         device=device,
-        backbone="wide_resnet50_2",
-        layers=("layer2", "layer3"),
+        backbone="swin_t",
+        layers=("features.3", "features.5"),
     )
 
     shared = model_dir / "shared.pth"

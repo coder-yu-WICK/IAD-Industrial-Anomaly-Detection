@@ -1,7 +1,7 @@
 {
   "model_mode": "hybrid",
-  "backbone": "wide_resnet50_2",
-  "layers": ["layer2", "layer3"],
+  "backbone": "swin_t",
+  "layers": ["features.3", "features.5"],
   "input_size": [256, 256],
   "crop_size": [224, 224],
   "coreset_ratio": 0.1,

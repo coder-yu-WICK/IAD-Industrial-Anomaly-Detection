@@ -34,10 +34,11 @@ import torch
 from patchcore import PatchCore, write_manifest
 
 
-# 主干配置：默认 wide_resnet50_2（28×28 多尺度特征，像素级定位强于 ViT）。
-# 换 ViT（Transformer 架构）跑对比：--backbone vit_b_16 --layers encoder.layers.2 encoder.layers.3
-BACKBONE = "wide_resnet50_2"
-LAYERS = ("layer2", "layer3")
+# 主干配置：默认 swin_t（Transformer 架构，28×28 + 14×14 多尺度特征）。
+# 换 ResNet 跑对照：--backbone wide_resnet50_2 --layers layer2 layer3
+# 换 ViT 跑对照：--backbone vit_b_16 --layers encoder.layers.2 encoder.layers.3
+BACKBONE = "swin_t"
+LAYERS = ("features.3", "features.5")
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,6 +74,15 @@ def read_manifest(path: Path) -> list[dict]:
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
 PRETRAINED_DIR = Path(__file__).resolve().parent.parent / "model" / "pretrained"
 
+# 主干名 -> (torchvision builder 名, Weights 枚举名)
+_PRETRAINED_REGISTRY = {
+    "wide_resnet50_2": ("wide_resnet50_2", "Wide_ResNet50_2_Weights"),
+    "vit_b_16": ("vit_b_16", "ViT_B_16_Weights"),
+    "swin_t": ("swin_t", "Swin_T_Weights"),
+    "swin_s": ("swin_s", "Swin_S_Weights"),
+    "swin_b": ("swin_b", "Swin_B_Weights"),
+}
+
 
 def get_pretrained(backbone: str = BACKBONE) -> Path:
     """返回可用的预训练权重路径（按主干名）。
@@ -85,17 +95,16 @@ def get_pretrained(backbone: str = BACKBONE) -> Path:
         print(f"[train] 本地预训练权重: {file}", flush=True)
         return file
 
-    print(f"[train] 未找到本地预训练权重，联网下载 {backbone} 并缓存 ...", flush=True)
-    if backbone == "wide_resnet50_2":
-        from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
-
-        m = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.IMAGENET1K_V1)
-    elif backbone == "vit_b_16":
-        from torchvision.models import vit_b_16, ViT_B_16_Weights
-
-        m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
-    else:
+    if backbone not in _PRETRAINED_REGISTRY:
         raise ValueError(f"不支持自动下载的主干 {backbone}，请手动放置 {file}")
+
+    print(f"[train] 未找到本地预训练权重，联网下载 {backbone} 并缓存 ...", flush=True)
+    import torchvision.models as tv_models
+
+    builder_name, weights_name = _PRETRAINED_REGISTRY[backbone]
+    builder = getattr(tv_models, builder_name)
+    weights = getattr(tv_models, weights_name).IMAGENET1K_V1
+    m = builder(weights=weights)
     file.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": m.state_dict()}, file)
     return file
