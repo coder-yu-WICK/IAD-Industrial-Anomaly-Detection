@@ -1,7 +1,7 @@
 {
   "model_mode": "hybrid",
-  "backbone": "vit_b_16",
-  "layers": ["encoder.layers.2", "encoder.layers.3"],
+  "backbone": "wide_resnet50_2",
+  "layers": ["layer2", "layer3"],
   "input_size": [256, 256],
   "crop_size": [224, 224],
   "coreset_ratio": 0.1,

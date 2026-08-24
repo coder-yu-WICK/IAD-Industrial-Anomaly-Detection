@@ -34,6 +34,12 @@ import torch
 from patchcore import PatchCore, write_manifest
 
 
+# 主干配置：默认 wide_resnet50_2（28×28 多尺度特征，像素级定位强于 ViT）。
+# 换 ViT（Transformer 架构）跑对比：--backbone vit_b_16 --layers encoder.layers.2 encoder.layers.3
+BACKBONE = "wide_resnet50_2"
+LAYERS = ("layer2", "layer3")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Omni-AD 统一训练入口")
     parser.add_argument("--data-root", type=Path, required=True)
@@ -42,6 +48,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--backbone", type=str, default=BACKBONE,
+                        help="torchvision 主干名（默认 wide_resnet50_2，可选 vit_b_16）")
+    parser.add_argument("--layers", type=str, nargs="+", default=list(LAYERS),
+                        help="特征层名序列（默认 layer2 layer3）")
     return parser.parse_args()
 
 
@@ -61,30 +71,34 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
-PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
-
-# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
-BACKBONE = "vit_b_16"
-LAYERS = ("encoder.layers.2", "encoder.layers.3")
+PRETRAINED_DIR = Path(__file__).resolve().parent.parent / "model" / "pretrained"
 
 
-def get_pretrained() -> Path:
-    """返回可用的预训练权重路径。
+def get_pretrained(backbone: str = BACKBONE) -> Path:
+    """返回可用的预训练权重路径（按主干名）。
 
     首次在联网开发机上运行时会下载并缓存到 model/pretrained/，
     之后（含断网评测环境）直接读取本地文件。
     """
-    if PRETRAINED_FILE.exists():
-        print(f"[train] 本地预训练权重: {PRETRAINED_FILE}", flush=True)
-        return PRETRAINED_FILE
+    file = PRETRAINED_DIR / f"{backbone}.pth"
+    if file.exists():
+        print(f"[train] 本地预训练权重: {file}", flush=True)
+        return file
 
-    print("[train] 未找到本地预训练权重，联网下载并缓存到 model/pretrained/ ...", flush=True)
-    from torchvision.models import vit_b_16, ViT_B_16_Weights
+    print(f"[train] 未找到本地预训练权重，联网下载 {backbone} 并缓存 ...", flush=True)
+    if backbone == "wide_resnet50_2":
+        from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
 
-    m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
-    PRETRAINED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": m.state_dict()}, PRETRAINED_FILE)
-    return PRETRAINED_FILE
+        m = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.IMAGENET1K_V1)
+    elif backbone == "vit_b_16":
+        from torchvision.models import vit_b_16, ViT_B_16_Weights
+
+        m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+    else:
+        raise ValueError(f"不支持自动下载的主干 {backbone}，请手动放置 {file}")
+    file.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"state_dict": m.state_dict()}, file)
+    return file
 
 
 def main() -> None:
@@ -105,9 +119,9 @@ def main() -> None:
     # 共享主干：离线加载必须把 state_dict 写入产物
     model = PatchCore(
         device=device,
-        backbone=BACKBONE,
-        layers=LAYERS,
-        pretrained_path=get_pretrained(),
+        backbone=args.backbone,
+        layers=tuple(args.layers),
+        pretrained_path=get_pretrained(args.backbone),
     )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
 
@@ -123,6 +137,16 @@ def main() -> None:
         )
 
     write_manifest(args.output_dir, categories, model_mode="hybrid")
+
+    # ONNX 加速（可选）：训练末尾把截断主干导出为 .onnx，predict 端可用 onnxruntime 加速。
+    # 缺 onnx/onnxscript 时静默跳过（不影响 shared.pth 与每类 bank 的正常产出）。
+    try:
+        onnx_path = args.output_dir / "shared.onnx"
+        model.export_onnx(onnx_path, input_size=model.preprocess.crop_size)
+        print(f"[train] onnx -> {onnx_path}", flush=True)
+    except Exception as e:  # noqa: BLE001 —— 导出失败只降级，不中断训练
+        print(f"[train] onnx 导出跳过（{type(e).__name__}: {e}）", flush=True)
+
     print(f"[train] done -> {args.output_dir}", flush=True)
 
 
