@@ -1,7 +1,11 @@
 # Copyright (C) 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""多尺度 patch 特征：多个特征层对齐拼接 + 3×3 局部平均池化。"""
+"""多尺度 patch 特征：多个特征层对齐拼接 + 3×3 局部平均池化。
+
+``__call__`` 走 PyTorch 主干；``aggregate`` 只做对齐 + 池化 + 拼接，
+供 ONNX 路径复用（ONNX 主干输出逐层特征后，聚合逻辑与此完全一致）。
+"""
 
 from __future__ import annotations
 
@@ -25,8 +29,17 @@ class PatchFeatureExtractor:
         self.pool = nn.AvgPool2d(3, stride=1, padding=1)
 
     def __call__(self, image: Tensor) -> Tensor:
-        """输入 (3, H, W) → 输出 (C, h, w)。"""
-        features = self.backbone.forward(image.unsqueeze(0))
+        """输入 (3, H, W) → 输出 (C, h, w)（PyTorch 主干路径）。
+
+        特征提取为纯推理，用 inference_mode 关闭 autograd（与冻结主干语义一致，
+        也避免下游 ``.numpy()`` 因 requires_grad 报错）。
+        """
+        with torch.inference_mode():
+            named = self.backbone.features(image.unsqueeze(0))
+        return self.aggregate(named)
+
+    def aggregate(self, features: dict[str, Tensor]) -> Tensor:
+        """输入 {layer: (1, C, h, w)} → 对齐 + 3×3 池化 + 拼接 → (ΣC, h, w)。"""
         ref = features[self.layers[0]]
         pooled = []
         for name in self.layers:
