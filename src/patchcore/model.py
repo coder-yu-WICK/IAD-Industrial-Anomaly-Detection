@@ -67,6 +67,7 @@ class PatchCore:
         cascade_ratios=(0.1, 0.1),
         use_prefix_dist: bool = False,
         prefix_dims: dict | None = None,
+        cascade: bool = True,
     ) -> None:
         self.device = device
         self.backbone_name = backbone
@@ -77,6 +78,9 @@ class PatchCore:
         self.cascade_ratios = tuple(cascade_ratios)
         self.use_prefix_dist = use_prefix_dist
         self.prefix_dims = dict(prefix_dims) if prefix_dims else None
+        # True=多层级联 bank（层维嵌套）；False=单 concat bank（无层维嵌套，
+        # 消融基线用；配合 prefix_dims 可做"仅维度嵌套"）。
+        self.cascade = cascade
         self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone, layers=self.layers)
         self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.preprocess = PatchPreprocess(input_size, crop_size)
@@ -102,6 +106,34 @@ class PatchCore:
             perm = torch.randperm(all_feats[self.layers[0]].shape[0])[: self.max_embed]
             all_feats = {lv: f[perm] for lv, f in all_feats.items()}
 
+        if not self.cascade:
+            # ---- 单 concat bank（legacy 格式，无层维嵌套）----
+            # 可选前缀维切片（matryoshka 维度嵌套）：prefix_dims 的 "concat" 键
+            # 指定拼接特征保留的前缀维数，用于"仅维度嵌套"消融。
+            eff = torch.cat([all_feats[lv] for lv in self.layers], dim=1)
+            if self.use_prefix_dist:
+                pd = self._single_prefix_dim(eff.shape[1])
+                eff = eff[:, :pd]
+            if self.coreset_ratio < 1.0:
+                idx = CoresetSampler(self.coreset_ratio).sample_indices(eff)
+            else:
+                idx = torch.arange(eff.shape[0])
+            bank = eff[idx]
+            norm_scale = compute_norm_scale(eff, bank)
+            self.bank_dict = {
+                "format_version": 1,
+                "bank": bank.cpu().numpy().astype(np.float32),
+                "norm_scale": norm_scale,
+                "prefix_dim": int(eff.shape[1]),
+                "backbone": self.backbone_name,
+                "layers": list(self.layers),
+                "input_size": list(self.preprocess.input_size),
+                "crop_size": list(self.preprocess.crop_size),
+                "sigma": self.sigma,
+            }
+            self._bank = None
+            return self.bank_dict
+
         concat = torch.cat([all_feats[lv] for lv in self.layers], dim=1)
         if self.coreset_ratio < 1.0:
             idx = CoresetSampler(self.coreset_ratio).sample_indices(concat)
@@ -120,6 +152,14 @@ class PatchCore:
         )
         self._bank = None
         return self.bank_dict
+
+    def _single_prefix_dim(self, total_dim: int) -> int:
+        """单 bank 模式的前缀维：取 prefix_dims['concat']，缺省则全维。"""
+        pd = self.prefix_dims.get("concat") if self.prefix_dims else None
+        if pd is None:
+            return total_dim
+        pd = int(pd)
+        return max(1, min(pd, total_dim))
 
     # ------------------------------------------------------------------ 推理
     def predict(self, image: Image.Image) -> Prediction:
@@ -140,6 +180,9 @@ class PatchCore:
         else:  # legacy 单 concat bank
             patch = self.extractor.concat_feature(x)
             h, w = patch.shape[-2:]
+            pd = (self.bank_dict or {}).get("prefix_dim")
+            if pd is not None:
+                patch = patch[:pd]
             dist = self._bank.nearest_dist(patch.reshape(patch.shape[0], -1).T)
 
         score_map = dist.reshape(1, h, w)
