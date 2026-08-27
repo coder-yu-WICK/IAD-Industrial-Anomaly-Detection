@@ -45,7 +45,9 @@ LAYERS = ("features.3", "features.5")
 # 像素定位更细。448 是 window=7 + 3 次 patch-merge 约束下 224 之后的最小合法分辨率（H,W 需 %112==0）。
 INPUT_SIZE = (512, 512)
 CROP_SIZE = (448, 448)
-MAX_EMBED = 50000  # 448 网格每图 3136 patch，coreset 贪心封顶控速（同 matryoshka 分支）
+MAX_EMBED = 200000  # coreset 贪心 O(k·n) 平方级：448 全量(~94 万 patch)每类要算 ~1.5h。
+                     # 先随机抽 20 万再贪心 → bank≈2 万，≈224 全量(2.35 万)覆盖，单类 ~30s。
+                     # 显存/算力充足可用 --max-embed 调大（代价是训练与预测 kNN 更慢）。
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,6 +62,12 @@ def parse_args() -> argparse.Namespace:
                         help="torchvision 主干名（默认 wide_resnet50_2，可选 vit_b_16）")
     parser.add_argument("--layers", type=str, nargs="+", default=list(LAYERS),
                         help="特征层名序列（默认 layer2 layer3）")
+    parser.add_argument("--input-size", type=int, nargs=2, default=list(INPUT_SIZE),
+                        help="预处理缩放 (H W)，默认 512 512；低显存用 256 256")
+    parser.add_argument("--crop-size", type=int, nargs=2, default=list(CROP_SIZE),
+                        help="中心裁剪 (H W)，默认 448 448；低显存用 224 224")
+    parser.add_argument("--max-embed", type=int, default=MAX_EMBED,
+                        help="coreset 前随机子采样 patch 上限（默认 200000，越大 bank 越全但越慢）")
     return parser.parse_args()
 
 
@@ -137,9 +145,9 @@ def main() -> None:
         device=device,
         backbone=args.backbone,
         layers=tuple(args.layers),
-        input_size=INPUT_SIZE,
-        crop_size=CROP_SIZE,
-        max_embed=MAX_EMBED,
+        input_size=tuple(args.input_size),
+        crop_size=tuple(args.crop_size),
+        max_embed=args.max_embed,
         pretrained_path=get_pretrained(args.backbone),
     )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
@@ -154,6 +162,8 @@ def main() -> None:
             category=category,
             bank_dict=bank_dict,
         )
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
     write_manifest(args.output_dir, categories, model_mode="hybrid")
 

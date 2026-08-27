@@ -13,7 +13,7 @@ def compute_norm_scale(feats: torch.Tensor, bank: torch.Tensor, chunk: int = 256
     """归一化 scale = 全量训练 patch 到 bank 最近邻距离均值（分块算，防爆内存）。"""
     dists = []
     for i in range(0, feats.shape[0], chunk):
-        d = torch.cdist(feats[i : i + chunk], bank)
+        d = torch.cdist(feats[i : i + chunk], bank, compute_mode="use_mm_for_euclid_dist")
         dists.append(d.min(dim=1).values)
     scale = float(torch.cat(dists).mean())
     return max(scale, 1e-6)
@@ -40,6 +40,6 @@ class MemoryBank:
             query = query.to(self.device)
         out = []
         for i in range(0, query.shape[0], chunk):
-            d = torch.cdist(query[i : i + chunk], self.bank)
+            d = torch.cdist(query[i : i + chunk], self.bank, compute_mode="use_mm_for_euclid_dist")
             out.append(d.min(dim=1).values)
         return torch.cat(out)

@@ -88,12 +88,16 @@ class PatchCore:
         for p in image_paths:
             x = self.preprocess.encode(Image.open(p)).to(self.device)
             patch = self.extractor(x)
-            feats.append(patch.reshape(patch.shape[0], -1).T)
+            # 高分辨率下每图 patch 多，逐图特征先挪 CPU 累积，显存只留 coreset 子集
+            feats.append(patch.reshape(patch.shape[0], -1).T.detach().cpu())
         all_feats = torch.cat(feats, dim=0)
+        del feats
 
         if self.max_embed is not None and all_feats.shape[0] > self.max_embed:
             perm = torch.randperm(all_feats.shape[0])[: self.max_embed]
             all_feats = all_feats[perm]
+
+        all_feats = all_feats.to(self.device)
 
         if self.coreset_ratio < 1.0:
             idx = CoresetSampler(self.coreset_ratio).sample_indices(all_feats)
