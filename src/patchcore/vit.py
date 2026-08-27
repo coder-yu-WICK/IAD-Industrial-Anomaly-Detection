@@ -200,3 +200,22 @@ def build_franca_vitb14(
         mlp_fused=mlp_fused,
         num_register_tokens=num_register_tokens,
     )
+
+
+def infer_swiglu_from_state(state: dict) -> dict | None:
+    """从 checkpoint 实际权重形状判定 SwiGLU 变体与隐藏维。
+
+    键 ``blocks.0.mlp.w12/w3`` 缺失（torchvision 主干）时返回 None；
+    规则与 scripts/fetch_franca.py 完全一致：标准 SwiGLU 的 w12 输出为
+    2×hidden（w12_out == 2·w3_in），xFormers fused 变体两者同宽。
+    运行时依此构建主干，避免硬编码默认 3072 与 Franca 实际隐藏维
+    （如 2048）不一致导致 load_state_dict size mismatch。
+    """
+    if not state or "blocks.0.mlp.w12.weight" not in state or "blocks.0.mlp.w3.weight" not in state:
+        return None
+    w12, w3 = state["blocks.0.mlp.w12.weight"], state["blocks.0.mlp.w3.weight"]
+    if w12.shape[0] == 2 * w3.shape[1]:
+        return {"mlp_hidden": w3.shape[1], "mlp_fused": False}
+    if w12.shape[0] == w3.shape[1]:
+        return {"mlp_hidden": w3.shape[1] // 2, "mlp_fused": True}
+    raise ValueError(f"无法判定 SwiGLU 变体：w12_out={w12.shape[0]} w3_in={w3.shape[1]}（应为 2:1 或 1:1）")

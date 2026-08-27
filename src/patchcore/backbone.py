@@ -20,7 +20,7 @@ import torch
 from torch import Tensor, nn
 from torchvision import models as tv_models
 
-from .vit import build_franca_vitb14
+from .vit import build_franca_vitb14, infer_swiglu_from_state
 
 # 自定义主干注册表：包内自实现、离线可用；未命中再走 torchvision 回退路径
 # （torchvision 路径仅用于加载旧 ckpt 的兼容，非新方案回退）。
@@ -59,19 +59,34 @@ class PatchBackbone:
         self.device = device
         self.name = name
         self.layers = tuple(layers)
-        builder = _CUSTOM_BACKBONES.get(name)
+        # Franca 主干 SwiGLU 的隐藏维/变体依 checkpoint 实际权重形状判定
+        # （fetch_franca.py 同规则；默认 3072 仅作随机初始化兜底）
+        state = None
+        if pretrained_path is not None:
+            state = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+            if "state_dict" in state:
+                state = state["state_dict"]
+        self._build_model(**(infer_swiglu_from_state(state) or {}))
+        if state is not None:
+            self.model.load_state_dict(state)
+
+    def _build_model(self, **builder_kwargs) -> None:
+        """构建主干并注册前向钩子（重建时同样调用）。
+
+        builder_kwargs 透传给自定义主干工厂（如 mlp_hidden/mlp_fused）；
+        torchvision 路径仅用于加载旧 ckpt 的兼容，无建参。
+        """
+        builder = _CUSTOM_BACKBONES.get(self.name)
         if builder is not None:
-            self.model = builder()  # 自定义主干（不联网）
+            self.model = builder(**builder_kwargs)  # 自定义主干（不联网）
         else:
-            builder = getattr(tv_models, name, None)
+            builder = getattr(tv_models, self.name, None)
             if not callable(builder):
-                raise ValueError(f"torchvision.models 中没有可调用的主干 {name}")
+                raise ValueError(f"torchvision.models 中没有可调用的主干 {self.name}")
             self.model = builder(weights=None)  # 不联网下载
         # 钩子输入若为 3D token 序列，需知道几个前置 token（cls/寄存器）用于重排
         self.num_register_tokens = getattr(self.model, "num_register_tokens", 0)
-        if pretrained_path is not None:
-            self.load_state(torch.load(pretrained_path, map_location="cpu", weights_only=False))
-        self.model = self.model.to(device)
+        self.model = self.model.to(self.device)
         self.model.eval()
         self.features: dict[str, Tensor] = {}
         for layer in self.layers:
@@ -113,7 +128,25 @@ class PatchBackbone:
         return self.model.state_dict()
 
     def load_state(self, state: dict) -> None:
-        """加载 state_dict（兼容 ``{"state_dict": ...}`` 包裹格式）。"""
+        """加载 state_dict（兼容 ``{"state_dict": ...}`` 包裹格式）。
+
+        若 checkpoint 的 SwiGLU 配置与当前模型不一致（如 Franca 隐藏维 2048
+        ≠ 默认 3072），先按 checkpoint 实际权重形状重建主干再加载，避免
+        size mismatch（predict 端 load_shared 同样走此路径）。
+        """
         if "state_dict" in state:
             state = state["state_dict"]
+        cfg = infer_swiglu_from_state(state)
+        if cfg is not None and self.name in _CUSTOM_BACKBONES:
+            s_w12 = state["blocks.0.mlp.w12.weight"].shape
+            s_w3 = state["blocks.0.mlp.w3.weight"].shape
+            m_w12 = self.model.blocks[0].mlp.w12.weight.shape
+            m_w3 = self.model.blocks[0].mlp.w3.weight.shape
+            if (m_w12[0], m_w3[1]) != (s_w12[0], s_w3[1]):
+                print(
+                    f"[backbone] SwiGLU 配置不匹配，按 checkpoint 重建主干: "
+                    f"mlp_hidden={cfg['mlp_hidden']} mlp_fused={cfg['mlp_fused']}",
+                    flush=True,
+                )
+                self._build_model(**cfg)
         self.model.load_state_dict(state)

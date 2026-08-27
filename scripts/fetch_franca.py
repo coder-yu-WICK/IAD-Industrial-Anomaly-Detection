@@ -147,7 +147,8 @@ def main() -> None:
     PRETRAINED.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {"state_dict": ours.state_dict(), "source": f"{args.hub_repo}:{args.entry}",
-         "img_size": args.img_size, "num_register_tokens": n_reg},
+         "img_size": args.img_size, "num_register_tokens": n_reg,
+         "mlp_hidden": mlp_hidden, "mlp_fused": mlp_fused},
         PRETRAINED,
     )
     sha = hashlib.sha256(PRETRAINED.read_bytes()).hexdigest()
