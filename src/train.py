@@ -40,6 +40,13 @@ from patchcore import PatchCore, write_manifest
 BACKBONE = "swin_t"
 LAYERS = ("features.3", "features.5")
 
+# 高分辨率输入（学习 matryoshka 分支思路）：Swin 无绝对位置编码（窗口局部相对位置偏置），
+# 224 预训练权重可直接用于 448 输入；features.3 28×28→56×56、features.5 14×14→28×28，
+# 像素定位更细。448 是 window=7 + 3 次 patch-merge 约束下 224 之后的最小合法分辨率（H,W 需 %112==0）。
+INPUT_SIZE = (512, 512)
+CROP_SIZE = (448, 448)
+MAX_EMBED = 50000  # 448 网格每图 3136 patch，coreset 贪心封顶控速（同 matryoshka 分支）
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Omni-AD 统一训练入口")
@@ -130,6 +137,9 @@ def main() -> None:
         device=device,
         backbone=args.backbone,
         layers=tuple(args.layers),
+        input_size=INPUT_SIZE,
+        crop_size=CROP_SIZE,
+        max_embed=MAX_EMBED,
         pretrained_path=get_pretrained(args.backbone),
     )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
