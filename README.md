@@ -9,7 +9,7 @@
 ## 方案概述
 
 - **方法**：PatchCore（对齐 anomalib 技术路线），无监督，只用各类别 `train/good` 正常样本。
-  - 主干 `vit_b_16`（torchvision 原生 ViT-B/16），取第 2、3 个 Transformer block 特征拼接，token 重排为网格 + 3×3 邻域聚合 → 1536 维 patch 特征。
+  - 主干 `franca_vitb14`（Franca CVPR 2026 ViT-B/14，ImageNet-21K 自监督），输入 518→37×37 网格，取第 3、6、9 个 Transformer block 特征拼接 + 3×3 邻域聚合 → 2304 维 patch 特征。
   - 每类正常样本建 memory bank，k-center greedy coreset 采样（`coreset_ratio=0.1`）。
   - 推理：patch 特征与所属类别 bank 的最近邻 L2 距离 → 热图（上采样 + 高斯平滑 `sigma=4`）→ 压缩到 `[0,1]`。
 - **模型模式**：`hybrid`（共享主干 `shared.pth` + 每类 bank `checkpoints/<category>.pth`）。
@@ -33,7 +33,7 @@ TeamName.zip
 │   ├── model_manifest.json
 │   ├── shared.pth          # 共享主干 state_dict
 │   ├── checkpoints/<category>.pth   # 每类 memory bank
-│   └── pretrained/vit_b_16.pth         # ImageNet 权重（断网训练必需）
+│   └── pretrained/franca_vitb14.pth   # Franca ViT-B/14 权重（断网训练必需）
 ├── pretrained_manifest.json          # 预训练权重来源与哈希
 └── third_party/
     └── LICENSES.md
@@ -59,7 +59,7 @@ python -u src/train.py \
 
 - 严格按 manifest 读取正常训练图像，不访问 test / ground_truth，支持任意类别子集。
 - 产物写入 `--output-dir`：`shared.pth` + `checkpoints/<category>.pth` + `model_manifest.json`，不覆盖提交包内原始 `model/`。
-- 预训练权重：`model/pretrained/vit_b_16.pth` 随包存放，断网环境下直接加载；首次在联网开发机上运行会自动下载缓存到该位置。
+- 预训练权重：`model/pretrained/franca_vitb14.pth` 随包存放，断网环境下直接加载；联网开发机上用 `python scripts/fetch_franca.py` 从 Franca 官方 hub 拉取权重、键名对齐并前向校验后打包到该位置（评测环境断网，train 缺失即报错，不会联网下载）。
 
 ## 推理（规范 §7）
 

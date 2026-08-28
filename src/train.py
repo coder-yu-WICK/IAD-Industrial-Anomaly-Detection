@@ -61,30 +61,30 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
-PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
+PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "franca_vitb14.pth"
 
-# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
+# 主干配置：Franca（DINOv2 风格 ViT-B/14，patch 14，518 输入 → 37×37 网格），
+# 取浅/中/深三个 Transformer block 特征。自写实现见 src/patchcore/vit.py。
 BACKBONE = "franca_vitb14"
 LAYERS = ("blocks.3", "blocks.6", "blocks.9")
 
 
 def get_pretrained() -> Path:
-    """返回可用的预训练权重路径。
+    """返回随包的 Franca 预训练权重路径。
 
-    首次在联网开发机上运行时会下载并缓存到 model/pretrained/，
-    之后（含断网评测环境）直接读取本地文件。
+    权重由实现期一次性脚本 ``scripts/fetch_franca.py`` 在联网开发机拉取 Franca
+    官方 hub 权重、对齐键名并前向校验后打包到 model/pretrained/。评测/复现环境
+    断网，缺失即明确报错（禁止联网下载，更不能用 torchvision vit_b_16 顶替）。
     """
     if PRETRAINED_FILE.exists():
         print(f"[train] 本地预训练权重: {PRETRAINED_FILE}", flush=True)
         return PRETRAINED_FILE
-
-    print("[train] 未找到本地预训练权重，联网下载并缓存到 model/pretrained/ ...", flush=True)
-    from torchvision.models import vit_b_16, ViT_B_16_Weights
-
-    m = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
-    PRETRAINED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": m.state_dict()}, PRETRAINED_FILE)
-    return PRETRAINED_FILE
+    raise FileNotFoundError(
+        f"缺少 Franca 预训练权重 {PRETRAINED_FILE}。\n"
+        "请在联网开发机运行 `python scripts/fetch_franca.py` 生成后随包提交；\n"
+        "注意：不能使用 torchvision vit_b_16.pth 顶替——franca_vitb14 是 patch=14 的 "
+        "DINOv2 风格主干，键名/结构不同，会直接 size mismatch。"
+    )
 
 
 def main() -> None:
