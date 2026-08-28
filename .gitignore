@@ -4,6 +4,7 @@ datasets/
 *.tar
 *.zip
 *.7z
+*.png
 
 # ===== 预训练权重 / checkpoint =====
 weights/
