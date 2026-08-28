@@ -2,6 +2,15 @@
   "format_version": "omniad-school-pretrained-1.0",
   "entries": [
     {
+      "name": "dinov2_vitl14_lvd142m",
+      "description": "DINOv2 ViT-L/14 主干在 LVD-142M 上的自监督预训练权重（含 4 寄存器 token）",
+      "source_url": "https://github.com/facebookresearch/dinov2 (torch.hub:dinov2_vitl14_reg)",
+      "sha256": "",
+      "local_path": "model/pretrained/dinov2_vitl14.pth",
+      "license": "Apache-2.0",
+      "usage": "src/train.py 默认主干（--backbone dinov2_vitl14），仅作特征提取器，训练阶段冻结。由 scripts/fetch_dinov2.py 下载打包并回填 sha256"
+    },
+    {
       "name": "swin_t_imagenet1k",
       "description": "TorchVision Swin-T 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
       "source_url": "https://download.pytorch.org/models/swin_t-704ceda3.pth",

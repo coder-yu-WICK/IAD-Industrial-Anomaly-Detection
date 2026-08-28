@@ -1,9 +1,9 @@
 {
   "model_mode": "hybrid",
-  "backbone": "swin_t",
-  "layers": ["features.3", "features.5"],
-  "input_size": [512, 512],
-  "crop_size": [448, 448],
+  "backbone": "dinov2_vitl14",
+  "layers": ["blocks.6", "blocks.12", "blocks.18"],
+  "input_size": [518, 518],
+  "crop_size": [518, 518],
   "coreset_ratio": 0.1,
   "sigma": 4.0,
   "seed": 2026,

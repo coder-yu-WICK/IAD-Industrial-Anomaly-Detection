@@ -28,6 +28,14 @@ import torch
 from torch import Tensor, nn
 from torchvision import models as tv_models
 
+from .dinov2 import build_dinov2_vitl14, infer_num_register_tokens
+
+# 自定义主干注册表：包内自实现、离线可用；未命中再走 torchvision 回退路径
+# （torchvision 路径仅用于加载 swin/resnet/vit 旧配置，非新方案回退）。
+_CUSTOM_BACKBONES = {
+    "dinov2_vitl14": build_dinov2_vitl14,
+}
+
 
 # ---------------------------------------------------------------------------
 # 子模块解析
@@ -178,6 +186,49 @@ class _TruncatedSwin(nn.Module):
         return tuple(outs[l] for l in self.layers)
 
 
+class _TruncatedDinoV2(nn.Module):
+    """标准 DINOv2 ViT 截断：patch embed → cls/寄存器 → pos → blocks[0..k] → 2D 特征。
+
+    复现官方 DinoVisionTransformer.forward 前半段（patch_embed → cat cls → +pos_embed
+    → 插寄存器 → 逐 block），在最深层 block 后停手；``norm`` 与 ``head`` 不注册。
+    token 顺序 [cls, registers, patches]，重排时由 to_spatial 丢弃前置 token。
+    """
+
+    def __init__(self, dino: nn.Module, layers: tuple[str, ...], num_register_tokens: int = 0) -> None:
+        super().__init__()
+        self.layers = tuple(layers)
+        self.num_register_tokens = num_register_tokens
+        self._deepest = max(int(l.rsplit(".", 1)[-1]) for l in self.layers)
+
+        self.patch_embed = dino.patch_embed
+        self.cls_token = dino.cls_token
+        self.mask_token = dino.mask_token
+        self.pos_embed = dino.pos_embed
+        if num_register_tokens:
+            self.register_tokens = dino.register_tokens
+        self.blocks = dino.blocks[: self._deepest + 1]
+
+    def _process_input(self, x: Tensor) -> Tensor:
+        n, _, _, _ = x.shape
+        x = self.patch_embed(x)  # (n, N, D)
+        x = torch.cat([self.cls_token.expand(n, -1, -1), x], dim=1)  # [cls, patches]
+        # 固定 518 输入，pos_embed 与 patch 数一致，无需插值
+        x = x + self.pos_embed
+        if self.num_register_tokens:
+            x = torch.cat([x[:, :1], self.register_tokens.expand(n, -1, -1), x[:, 1:]], dim=1)
+        return x
+
+    def forward(self, x: Tensor) -> tuple[Tensor, ...]:
+        x = self._process_input(x)
+        outs: dict[str, Tensor] = {}
+        for i in range(self._deepest + 1):
+            x = self.blocks[i](x)
+            name = f"blocks.{i}"
+            if name in self.layers:
+                outs[name] = to_spatial(x, self.num_register_tokens)
+        return tuple(outs[l] for l in self.layers)
+
+
 def _truncate(model: nn.Module, layers: tuple[str, ...], num_register_tokens: int = 0) -> nn.Module:
     """按架构族分派截断包装。"""
     if all(hasattr(model, a) for a in ("layer4", "avgpool", "fc")):
@@ -186,7 +237,9 @@ def _truncate(model: nn.Module, layers: tuple[str, ...], num_register_tokens: in
         return _TruncatedViT(model, layers, num_register_tokens)
     if hasattr(model, "features") and hasattr(model, "head"):
         return _TruncatedSwin(model, layers)
-    raise ValueError(f"不支持截断的主干（需 ResNet / torchvision ViT / Swin 结构）")
+    if hasattr(model, "blocks") and hasattr(model, "patch_embed") and hasattr(model, "mask_token"):
+        return _TruncatedDinoV2(model, layers, num_register_tokens)
+    raise ValueError(f"不支持截断的主干（需 ResNet / torchvision ViT / Swin / DINOv2 结构）")
 
 
 # ---------------------------------------------------------------------------
@@ -215,12 +268,26 @@ class PatchBackbone(nn.Module):
         self.device = device
         self.name = name
         self.layers = tuple(layers)
-        builder = getattr(tv_models, name, None)
-        if not callable(builder):
-            raise ValueError(f"torchvision.models 中没有可调用的主干 {name}")
-        model = builder(weights=None)  # 不联网下载
+
+        state = None
         if pretrained_path is not None:
-            self._load_state(model, torch.load(pretrained_path, map_location="cpu", weights_only=False))
+            state = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+
+        builder = _CUSTOM_BACKBONES.get(name)
+        if builder is not None:
+            # 自定义主干（如 dinov2_vitl14）：依 checkpoint 实际权重判定寄存器数
+            builder_kwargs = {}
+            if state is not None:
+                sd = state.get("state_dict", state)
+                builder_kwargs["num_register_tokens"] = infer_num_register_tokens(sd)
+            model = builder(**builder_kwargs)
+        else:
+            builder = getattr(tv_models, name, None)
+            if not callable(builder):
+                raise ValueError(f"torchvision.models 中没有可调用的主干 {name}")
+            model = builder(weights=None)  # 不联网下载
+        if state is not None:
+            self._load_state(model, state)
         self.model = _truncate(model, self.layers, getattr(model, "num_register_tokens", 0))
         self.model.to(device)
         self.model.eval()

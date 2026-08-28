@@ -34,20 +34,17 @@ import torch
 from patchcore import PatchCore, write_manifest
 
 
-# 主干配置：默认 swin_t（Transformer 架构，28×28 + 14×14 多尺度特征）。
+# 主干配置：默认 dinov2_vitl14（DINOv2 ViT-L/14，自监督 LVD-142M + 4 寄存器，1024 维）。
+# 换回 swin 跑对照：--backbone swin_t --layers features.3 features.5
 # 换 ResNet 跑对照：--backbone wide_resnet50_2 --layers layer2 layer3
-# 换 ViT 跑对照：--backbone vit_b_16 --layers encoder.layers.2 encoder.layers.3
-BACKBONE = "swin_t"
-LAYERS = ("features.3", "features.5")
+BACKBONE = "dinov2_vitl14"
+LAYERS = ("blocks.6", "blocks.12", "blocks.18")  # 24 层取 25%/50%/75%（对齐 franca 的 3/6/9 相对位置）
 
-# 高分辨率输入（学习 matryoshka 分支思路）：Swin 无绝对位置编码（窗口局部相对位置偏置），
-# 224 预训练权重可直接用于 448 输入；features.3 28×28→56×56、features.5 14×14→28×28，
-# 像素定位更细。448 是 window=7 + 3 次 patch-merge 约束下 224 之后的最小合法分辨率（H,W 需 %112==0）。
-INPUT_SIZE = (512, 512)
-CROP_SIZE = (448, 448)
-MAX_EMBED = 200000  # coreset 贪心 O(k·n) 平方级：448 全量(~94 万 patch)每类要算 ~1.5h。
-                     # 先随机抽 20 万再贪心 → bank≈2 万，≈224 全量(2.35 万)覆盖，单类 ~30s。
-                     # 显存/算力充足可用 --max-embed 调大（代价是训练与预测 kNN 更慢）。
+# 518 = DINOv2 预训练原生分辨率（patch 14 → 37×37 grid），无需裁剪/插值位置编码。
+INPUT_SIZE = (518, 518)
+CROP_SIZE = (518, 518)
+MAX_EMBED = None  # 全量 patch 参与 coreset（对齐 franca，不因显存缩减；贪心 O(k·n) 较慢）。
+                  # 单类 patch ≈ N图 × 37×37；显存/时间紧张时可用 --max-embed 加子采样上限。
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,7 +108,10 @@ def get_pretrained(backbone: str = BACKBONE) -> Path:
         return file
 
     if backbone not in _PRETRAINED_REGISTRY:
-        raise ValueError(f"不支持自动下载的主干 {backbone}，请手动放置 {file}")
+        hint = ""
+        if backbone == "dinov2_vitl14":
+            hint = "（请先在联网开发机运行 scripts/fetch_dinov2.py 下载并打包权重）"
+        raise ValueError(f"不支持自动下载的主干 {backbone}，请手动放置 {file}{hint}")
 
     print(f"[train] 未找到本地预训练权重，联网下载 {backbone} 并缓存 ...", flush=True)
     import torchvision.models as tv_models
