@@ -59,8 +59,8 @@ class PatchCore:
         layers=("layer2", "layer3"),
         coreset_ratio: float = 0.1,
         max_embed: int | None = None,
-        input_size=(256, 256),
-        crop_size=(224, 224),
+        input_size=(518, 518),
+        crop_size=(518, 518),
         pretrained_path: Path | str | None = None,
         sigma: float = 4.0,
     ) -> None:
