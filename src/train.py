@@ -64,8 +64,8 @@ def read_manifest(path: Path) -> list[dict]:
 PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
 
 # 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
-BACKBONE = "vit_b_16"
-LAYERS = ("encoder.layers.2", "encoder.layers.3")
+BACKBONE = "franca_vitb14"
+LAYERS = ("blocks.3", "blocks.6", "blocks.9")
 
 
 def get_pretrained() -> Path:
