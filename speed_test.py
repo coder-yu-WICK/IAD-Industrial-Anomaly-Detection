@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--num-iters", type=int, default=50, help="Number of iterations for speed test")
     parser.add_argument("--warmup", type=int, default=5, help="Number of warmup iterations")
     parser.add_argument("--image-size", type=int, default=518, help="Dummy image size (square)")
+    parser.add_argument("--model-dir", type=str, default="work/model", help="Directory containing shared.pth and checkpoints")
     return parser.parse_args()
 
 def main():
@@ -29,16 +30,17 @@ def main():
         layers=("blocks.6", "blocks.12", "blocks.18"),
     )
 
-    shared_path = Path("shared.pth")
+    model_dir = Path(args.model_dir)
+    shared_path = model_dir / "shared.pth"
     if not shared_path.exists():
-        print(f"Error: {shared_path} not found in the root directory.")
+        print(f"Error: {shared_path} not found.")
         return
         
     print(f"Loading shared backbone from {shared_path}...")
     model.load_shared(shared_path)
 
     # Load first available checkpoint
-    ckpt_dir = Path("checkpoints")
+    ckpt_dir = model_dir / "checkpoints"
     if not ckpt_dir.exists():
         print(f"Error: {ckpt_dir} directory not found.")
         return
@@ -53,7 +55,7 @@ def main():
     model.load_category(ckpt_path)
 
     # Try ONNX fallback
-    onnx_path = Path("shared.onnx")
+    onnx_path = model_dir / "shared.onnx"
     if onnx_path.exists():
         try:
             model.load_onnx(onnx_path)
