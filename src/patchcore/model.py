@@ -63,6 +63,7 @@ class PatchCore:
         crop_size=(518, 518),
         pretrained_path: Path | str | None = None,
         sigma: float = 4.0,
+        inference_dtype: str | None = None,
     ) -> None:
         self.device = device
         self.backbone_name = backbone
@@ -70,8 +71,11 @@ class PatchCore:
         self.coreset_ratio = coreset_ratio
         self.max_embed = max_embed
         self.sigma = sigma
+        # None → CUDA 默认 FP16 推理加速（主干 autocast + kNN 半精度，特征仍 FP32 输出）；
+        # 显式 "float32" 走纯 FP32 以便对照复测指标。
+        self.inference_dtype = inference_dtype
         self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone, layers=self.layers)
-        self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
+        self.extractor = PatchFeatureExtractor(self.backbone, self.layers, self.inference_dtype)
         self.preprocess = PatchPreprocess(input_size, crop_size)
         self.bank_dict: dict | None = None
         self.image_threshold: float | None = None
@@ -128,7 +132,7 @@ class PatchCore:
         if self.bank_dict is None:
             raise RuntimeError("未设置 bank（先调用 fit 或 load_category）")
         if self._bank is None:
-            self._bank = MemoryBank(self.bank_dict, device=self.device)
+            self._bank = MemoryBank(self.bank_dict, device=self.device, inference_dtype=self.inference_dtype)
         preprocess = PatchPreprocess.from_dict(self.bank_dict)
         map_gen = AnomalyMapGenerator(sigma=self.bank_dict.get("sigma") or 4.0)
 
@@ -181,7 +185,7 @@ class PatchCore:
             self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
             self.backbone_name = backbone
             self.layers = layers
-            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers, self.inference_dtype)
         self._bank = None
         return self.bank_dict
 
@@ -206,7 +210,7 @@ class PatchCore:
             self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
             self.backbone_name = backbone
             self.layers = layers
-            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers, self.inference_dtype)
         self.backbone.load_state(ckpt["state_dict"])
 
     # ------------------------------------------------------------- ONNX 加速

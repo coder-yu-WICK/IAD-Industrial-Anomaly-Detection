@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import csv
 import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, required=True)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--inference-dtype", type=str, default=None,
+                        help="推理精度：None(默认)=CUDA 自动 FP16；float32=纯 FP32 对照复测；"
+                             "float16/bfloat16=强制半精度")
     return parser.parse_args()
 
 
@@ -56,7 +60,7 @@ def read_manifest(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def load_model(model_dir: Path, device: torch.device):
+def load_model(model_dir: Path, device: torch.device, inference_dtype: str | None = None):
     """加载共享主干 + 按类别懒加载 memory bank。
 
     主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构，
@@ -66,6 +70,7 @@ def load_model(model_dir: Path, device: torch.device):
         device=device,
         backbone="dinov2_vitl14",
         layers=("blocks.6", "blocks.12", "blocks.18"),
+        inference_dtype=inference_dtype,
     )
 
     shared = model_dir / "shared.pth"
@@ -122,11 +127,19 @@ def main() -> None:
     maps_dir.mkdir(exist_ok=True)
 
     samples = read_manifest(args.manifest)
-    model, get_bank = load_model(args.model_dir, device)
+    model, get_bank = load_model(args.model_dir, device, args.inference_dtype)
 
     from PIL import Image
 
+    # 预热：首次调用触发 CUDA kernel 编译/缓存分配，避免计入首图耗时
+    first = samples[0]
+    get_bank(first["category"])
+    _ = model.predict(Image.open(args.data_root / first["image_path"]).convert("RGB"))
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+
     predictions: list[tuple[str, float]] = []
+    t_start = time.perf_counter()
     for sample in samples:
         sample_id = sample["sample_id"]
         category = sample["category"]
@@ -139,6 +152,11 @@ def main() -> None:
         save_map_uint16(maps_dir / f"{sample_id}.png", pred.anomaly_map)
         predictions.append((sample_id, pred.image_score))
         print(f"[predict] {sample_id} ({category}) score={pred.image_score:.6f}", flush=True)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t_total = time.perf_counter() - t_start
+    print(f"[predict] 推理完成 {len(predictions)} 张，总耗时 {t_total:.3f}s，"
+          f"平均 {t_total / len(predictions) * 1000:.1f} ms/图", flush=True)
 
     # predictions.csv
     with (args.output_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as f:
