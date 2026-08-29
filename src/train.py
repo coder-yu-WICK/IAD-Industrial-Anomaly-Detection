@@ -67,7 +67,7 @@ PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained
 # 输入尺寸=512（与 Omni-AD-30 原始图 512×512 一致，1:1 无放大/缩小浪费）。
 # torchvision ViT 位置编码固定 224，已由 backbone.py 的 _ViTFlexForward 做网格插值。
 BACKBONE = "vit_b_16"
-LAYERS = ("encoder.layers.2", "encoder.layers.3")
+LAYERS = ("encoder.layers.4", "encoder.layers.5")
 INPUT_SIZE = 512  # 与原始图一致；patch=16 → 32×32=1024 token/图
 MAX_EMBED = 50000  # 1024 token/图 × 多张正常图，coreset 贪心需封顶
 

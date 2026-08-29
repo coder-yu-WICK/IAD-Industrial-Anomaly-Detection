@@ -56,7 +56,7 @@ class PatchCore:
         self,
         device: torch.device,
         backbone: str = "wide_resnet50_2",
-        layers=("layer2", "layer3"),
+        layers=("layer4", "layer5"),
         coreset_ratio: float = 0.1,
         max_embed: int | None = None,
         input_size=(256, 256),
@@ -162,7 +162,7 @@ class PatchCore:
         self.bank_dict = data["bank_dict"]
         # bank_dict 同样携带架构信息，双保险（与 shared.pth 一致时无操作）
         backbone = self.bank_dict.get("backbone") or "wide_resnet50_2"
-        layers = tuple(self.bank_dict.get("layers") or ("layer2", "layer3"))
+        layers = tuple(self.bank_dict.get("layers") or ("layer4", "layer5"))
         if backbone != self.backbone_name or layers != self.layers:
             self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
             self.backbone_name = backbone
