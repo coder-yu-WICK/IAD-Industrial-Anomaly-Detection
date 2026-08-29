@@ -66,6 +66,8 @@ def load_model(model_dir: Path, device: torch.device):
         device=device,
         backbone="vit_b_16",
         layers=("encoder.layers.2", "encoder.layers.3"),
+        input_size=(512, 512),
+        crop_size=(512, 512),
     )
 
     shared = model_dir / "shared.pth"

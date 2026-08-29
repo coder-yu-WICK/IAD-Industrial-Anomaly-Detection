@@ -63,9 +63,13 @@ def read_manifest(path: Path) -> list[dict]:
 # 预训练权重随包存放（评测环境断网，禁止联网下载）
 PRETRAINED_FILE = Path(__file__).resolve().parent.parent / "model" / "pretrained" / "vit_b_16.pth"
 
-# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征
+# 主干配置：torchvision 原生 ViT（vit_b_16），取第 2、3 个 Transformer block 特征。
+# 输入尺寸=512（与 Omni-AD-30 原始图 512×512 一致，1:1 无放大/缩小浪费）。
+# torchvision ViT 位置编码固定 224，已由 backbone.py 的 _ViTFlexForward 做网格插值。
 BACKBONE = "vit_b_16"
 LAYERS = ("encoder.layers.2", "encoder.layers.3")
+INPUT_SIZE = 512  # 与原始图一致；patch=16 → 32×32=1024 token/图
+MAX_EMBED = 50000  # 1024 token/图 × 多张正常图，coreset 贪心需封顶
 
 
 def get_pretrained() -> Path:
@@ -108,6 +112,9 @@ def main() -> None:
         backbone=BACKBONE,
         layers=LAYERS,
         pretrained_path=get_pretrained(),
+        input_size=(INPUT_SIZE, INPUT_SIZE),
+        crop_size=(INPUT_SIZE, INPUT_SIZE),
+        max_embed=MAX_EMBED,
     )
     model.save_shared(args.output_dir / "shared.pth", seed=args.seed)
 
