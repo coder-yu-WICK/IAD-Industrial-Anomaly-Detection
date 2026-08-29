@@ -60,12 +60,12 @@ def load_model(model_dir: Path, device: torch.device):
     """加载共享主干 + 按类别懒加载 memory bank。
 
     主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构，
-    如 dinov2_vitl14），此处默认值仅作轻量占位（swin_t 随机初始化、随即被替换）。
+    此处默认使用与 train.py 一致的 dinov2_vitl14）。
     """
     model = PatchCore(
         device=device,
-        backbone="swin_t",
-        layers=("features.3", "features.5"),
+        backbone="dinov2_vitl14",
+        layers=("blocks.6", "blocks.12", "blocks.18"),
     )
 
     shared = model_dir / "shared.pth"

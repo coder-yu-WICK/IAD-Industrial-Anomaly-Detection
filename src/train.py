@@ -56,9 +56,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--backbone", type=str, default=BACKBONE,
-                        help="torchvision 主干名（默认 wide_resnet50_2，可选 vit_b_16）")
+                        help="torchvision 主干名（默认 dinov2_vitl14，可选 wide_resnet50_2）")
     parser.add_argument("--layers", type=str, nargs="+", default=list(LAYERS),
-                        help="特征层名序列（默认 layer2 layer3）")
+                        help="特征层名序列（默认 blocks.6 blocks.12 blocks.18）")
     parser.add_argument("--input-size", type=int, nargs=2, default=list(INPUT_SIZE),
                         help="预处理缩放 (H W)，默认 512 512；低显存用 256 256")
     parser.add_argument("--crop-size", type=int, nargs=2, default=list(CROP_SIZE),

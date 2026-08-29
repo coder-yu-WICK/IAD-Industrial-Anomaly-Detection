@@ -5,10 +5,10 @@
       "name": "dinov2_vitl14_lvd142m",
       "description": "DINOv2 ViT-L/14 主干在 LVD-142M 上的自监督预训练权重（含 4 寄存器 token）",
       "source_url": "https://github.com/facebookresearch/dinov2 (torch.hub:dinov2_vitl14_reg)",
-      "sha256": "",
+      "sha256": "52ce2ee2988236b02d8d8bff9c17b6bf768d8f49f3292827161538d900d487b5",
       "local_path": "model/pretrained/dinov2_vitl14.pth",
       "license": "Apache-2.0",
-      "usage": "src/train.py 默认主干（--backbone dinov2_vitl14），仅作特征提取器，训练阶段冻结。由 scripts/fetch_dinov2.py 下载打包并回填 sha256"
+      "usage": "src/train.py 默认主干（--backbone dinov2_vitl14），仅作特征提取器，训练阶段冻结"
     },
     {
       "name": "swin_t_imagenet1k",
@@ -17,7 +17,7 @@
       "sha256": "704ceda373461b0a224fcdddd75cd2a5e9f8064512ed47adbddef7f343fd147b",
       "local_path": "model/pretrained/swin_t.pth",
       "license": "Apache-2.0",
-      "usage": "src/train.py 默认主干（--backbone swin_t），仅作特征提取器，训练阶段冻结"
+      "usage": "src/train.py 可选主干（--backbone swin_t），仅作特征提取器，训练阶段冻结"
     },
     {
       "name": "swin_s_imagenet1k",
@@ -44,7 +44,7 @@
       "sha256": "",
       "local_path": "model/pretrained/wide_resnet50_2.pth",
       "license": "BSD-3-Clause",
-      "usage": "src/train.py 默认主干（--backbone wide_resnet50_2），仅作特征提取器，训练阶段冻结"
+      "usage": "src/train.py 可选主干（--backbone wide_resnet50_2），仅作特征提取器，训练阶段冻结"
     },
     {
       "name": "vit_b_16_imagenet1k",

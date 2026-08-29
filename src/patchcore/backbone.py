@@ -253,16 +253,16 @@ class PatchBackbone(nn.Module):
         device: 运行设备。
         pretrained_path: 预训练权重文件路径；为 None 时用随机初始化
             （断网评测环境由 predict 从 shared.pth 加载）。
-        name: ``torchvision.models`` 中任意主干名，默认 ``wide_resnet50_2``。
-        layers: 特征层路径序列，默认 ("layer2", "layer3")。
+        name: ``torchvision.models`` 中任意主干名，默认 ``dinov2_vitl14``。
+        layers: 特征层路径序列，默认 ("blocks.6", "blocks.12", "blocks.18")。
     """
 
     def __init__(
         self,
         device: torch.device,
         pretrained_path: Path | str | None = None,
-        name: str = "wide_resnet50_2",
-        layers=("layer2", "layer3"),
+        name: str = "dinov2_vitl14",
+        layers=("blocks.6", "blocks.12", "blocks.18"),
     ) -> None:
         super().__init__()
         self.device = device
