@@ -30,7 +30,16 @@ class OnnxBackbone:
         import onnxruntime as ort  # 延迟导入：未安装 onnxruntime 时回退 PyTorch 路径
 
         if providers is None:
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            available_providers = ort.get_available_providers()
+            providers = []
+            if "TensorrtExecutionProvider" in available_providers:
+                trt_options = {
+                    "trt_fp16_enable": True,
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": str(Path(path).parent),
+                }
+                providers.append(("TensorrtExecutionProvider", trt_options))
+            providers.extend(["CUDAExecutionProvider", "CPUExecutionProvider"])
         self.sess = ort.InferenceSession(str(path), providers=providers)
         self.input_name = self.sess.get_inputs()[0].name
         self.output_names = [o.name for o in self.sess.get_outputs()]
