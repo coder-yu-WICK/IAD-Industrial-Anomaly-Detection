@@ -41,12 +41,13 @@ class PatchCore:
 
     Args:
         device: 运行设备（cuda 或 cpu）。
-        backbone: 主干名，仅支持 wide_resnet50_2。
-        layers: 特征层，默认 layer2+layer3。
+        backbone: ``torchvision.models`` 中任意主干名，如 dinov2_vitl14 /
+            wide_resnet50_2（默认 dinov2_vitl14）。
+        layers: 特征层名序列，如 ("blocks.6", "blocks.12", "blocks.18") 或 ("layer2", "layer3")。
         coreset_ratio: coreset 采样比例。bank 大小 = ratio × patch 总数，
             直接决定推理最近邻查询速度（调低即加速）。默认 0.1（参考口径）。
         max_embed: 可选 patch 子采样安全阀；None（默认）= 全量采样。
-        input_size / crop_size: 预处理缩放 / 中心裁剪，默认 256 / 224。
+        input_size / crop_size: 预处理缩放 / 中心裁剪，默认 518 / 518。
         pretrained_path: 离线预训练权重路径（train 用）；None 时 predict 从 shared.pth 加载。
         sigma: 热图高斯平滑标准差。
     """
@@ -54,26 +55,28 @@ class PatchCore:
     def __init__(
         self,
         device: torch.device,
-        backbone: str = "wide_resnet50_2",
-        layers=("layer2", "layer3"),
+        backbone: str = "dinov2_vitl14",
+        layers=("blocks.6", "blocks.12", "blocks.18"),
         coreset_ratio: float = 0.1,
         max_embed: int | None = None,
-        input_size=(256, 256),
-        crop_size=(224, 224),
+        input_size=(518, 518),
+        crop_size=(518, 518),
         pretrained_path: Path | str | None = None,
         sigma: float = 4.0,
     ) -> None:
         self.device = device
+        self.backbone_name = backbone
         self.layers = tuple(layers)
         self.coreset_ratio = coreset_ratio
         self.max_embed = max_embed
         self.sigma = sigma
-        self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone)
+        self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone, layers=self.layers)
         self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.preprocess = PatchPreprocess(input_size, crop_size)
         self.bank_dict: dict | None = None
         self.image_threshold: float | None = None
         self._bank: MemoryBank | None = None
+        self.onnx = None  # 可选 OnnxBackbone；非 None 时 predict 走 ONNX 特征提取
 
     # ------------------------------------------------------------------ 训练
     def fit(self, image_paths: list[Path]) -> dict:
@@ -85,12 +88,16 @@ class PatchCore:
         for p in image_paths:
             x = self.preprocess.encode(Image.open(p)).to(self.device)
             patch = self.extractor(x)
-            feats.append(patch.reshape(patch.shape[0], -1).T)
+            # 高分辨率下每图 patch 多，逐图特征先挪 CPU 累积，显存只留 coreset 子集
+            feats.append(patch.reshape(patch.shape[0], -1).T.detach().cpu())
         all_feats = torch.cat(feats, dim=0)
+        del feats
 
         if self.max_embed is not None and all_feats.shape[0] > self.max_embed:
             perm = torch.randperm(all_feats.shape[0])[: self.max_embed]
             all_feats = all_feats[perm]
+
+        all_feats = all_feats.to(self.device)
 
         if self.coreset_ratio < 1.0:
             idx = CoresetSampler(self.coreset_ratio).sample_indices(all_feats)
@@ -106,6 +113,8 @@ class PatchCore:
             "coreset_indices": coreset_indices,
             "norm_scale": norm_scale,
             "feature_dim": int(bank.shape[1]),
+            "backbone": self.backbone_name,
+            "layers": list(self.layers),
             "input_size": list(self.preprocess.input_size),
             "crop_size": list(self.preprocess.crop_size),
             "sigma": self.sigma,
@@ -123,8 +132,17 @@ class PatchCore:
         preprocess = PatchPreprocess.from_dict(self.bank_dict)
         map_gen = AnomalyMapGenerator(sigma=self.bank_dict.get("sigma") or 4.0)
 
-        x = preprocess.encode(image).to(self.device)
-        patch = self.extractor(x)  # (C, h, w)
+        if self.onnx is not None:
+            # ONNX 路径：主干特征由 ONNX Runtime 提取，聚合逻辑与 PyTorch 一致
+            x_np = preprocess.encode(image).numpy()[None].astype("float32")  # (1,3,H,W)
+            named = {
+                name: torch.from_numpy(f).to(self.device)
+                for name, f in zip(self.layers, self.onnx(x_np))
+            }
+            patch = self.extractor.aggregate(named)  # (C, h, w)
+        else:
+            x = preprocess.encode(image).to(self.device)
+            patch = self.extractor(x)  # (C, h, w)
         h, w = patch.shape[-2:]
         q = patch.reshape(patch.shape[0], -1).T  # (h*w, C)
         dist = self._bank.nearest_dist(q)  # (h*w,)
@@ -156,13 +174,48 @@ class PatchCore:
     def load_category(self, path: Path) -> dict:
         data = torch.load(path, map_location="cpu", weights_only=False)
         self.bank_dict = data["bank_dict"]
+        # bank_dict 同样携带架构信息，双保险（与 shared.pth 一致时无操作）
+        backbone = self.bank_dict.get("backbone") or "dinov2_vitl14"
+        layers = tuple(self.bank_dict.get("layers") or ("blocks.6", "blocks.12", "blocks.18"))
+        if backbone != self.backbone_name or layers != self.layers:
+            self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
+            self.backbone_name = backbone
+            self.layers = layers
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self._bank = None
         return self.bank_dict
 
     def save_shared(self, path: Path, seed: int) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"state_dict": self.backbone.state_dict(), "seed": seed}, path)
+        torch.save(
+            {
+                "state_dict": self.backbone.state_dict(),
+                "seed": seed,
+                "backbone": self.backbone_name,
+                "layers": list(self.layers),
+            },
+            path,
+        )
 
     def load_shared(self, path: Path) -> None:
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        # 架构信息随 ckpt 走，predict 端无需知道训练时的 backbone 名
+        backbone = ckpt.get("backbone") or "dinov2_vitl14"
+        layers = tuple(ckpt.get("layers") or ("blocks.6", "blocks.12", "blocks.18"))
+        if backbone != self.backbone_name or layers != self.layers:
+            self.backbone = PatchBackbone(self.device, name=backbone, layers=layers)
+            self.backbone_name = backbone
+            self.layers = layers
+            self.extractor = PatchFeatureExtractor(self.backbone, self.layers)
         self.backbone.load_state(ckpt["state_dict"])
+
+    # ------------------------------------------------------------- ONNX 加速
+    def export_onnx(self, path: Path, input_size=(224, 224)) -> None:
+        """导出截断主干为 ONNX（输出为逐层特征，顺序 = self.layers）。"""
+        self.backbone.export_onnx(path, input_size=input_size)
+
+    def load_onnx(self, path: Path) -> None:
+        """加载 ONNX 主干；之后 predict 走 ONNX 特征提取（聚合逻辑不变）。"""
+        from .onnx import OnnxBackbone
+
+        self.onnx = OnnxBackbone(path)

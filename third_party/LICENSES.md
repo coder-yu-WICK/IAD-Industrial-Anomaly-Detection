@@ -1,38 +1,36 @@
-# 第三方代码与许可说明
+# Third-Party Licenses
 
-本提交包（TeamName.zip）除自有代码外，涉及以下第三方组件与算法参考。提交包内仅包含运行必需的文件；完整许可文本可在各来源获取。
+本文件列明提交包所使用或依赖的第三方组件及其许可。评测断网运行，以下组件均随包提供
+（预训练权重）或由评测平台预装（Python 依赖），提交代码不进行任何动态安装。
 
-## 1. 运行依赖（由 requirements.lock 声明）
+## Python 依赖（由评测平台按 requirements.lock 提供）
 
-| 依赖 | 版本 | 许可 |
-|---|---|---|
-| torch | 2.12.0 | BSD-3-Clause |
-| torchvision | 0.27.0 | BSD-3-Clause |
-| numpy | 2.4.6 | BSD-3-Clause |
-| Pillow | 11.3.0 | HPND（MIT-CMU，前身为 PIL 许可） |
+| 组件 | 版本 | License | 用途 |
+| ---- | ---- | ------- | ---- |
+| PyTorch (`torch`) | 见 `requirements.lock` | BSD-3-Clause | 模型构建 / 训练 / 推理 |
+| TorchVision (`torchvision`) | 见 `requirements.lock` | BSD-3-Clause | 主干模型 / 图像预处理 |
+| NumPy (`numpy`) | 见 `requirements.lock` | BSD-3-Clause | 数值 / 数组操作 |
+| Pillow (`pillow`) | 见 `requirements.lock` | HPND | 图像读取 / 16-bit PNG 输出 |
 
-以上依赖不在提交包内，由评测环境按 requirements.lock 安装；此处仅记录其许可归属。
+> 可选加速依赖 `onnxruntime` / `onnx`（用于 `--backbone` 默认主干的 ONNX 推理加速）。
+> 本提交包未强制要求；`src/train.py`、`src/predict.py` 在缺少时自动回退到 PyTorch 推理，
+> 不产生任何安装行为。
 
-## 2. 预训练权重
+## 预训练权重（随包存放于 `model/pretrained/`，来源与哈希见 `pretrained_manifest.json`）
 
-| 权重 | 来源 | 许可 |
-|---|---|---|
-| wide_resnet50_2（ImageNet-1K V1） | torchvision 模型库，见 `pretrained_manifest.json` | BSD-3-Clause（TorchVision 模型权重） |
+| 权重 | License | 说明 |
+| ---- | ------- | ---- |
+| DINOv2 ViT-L/14 (LVD-142M) `dinov2_vitl14.pth` | Apache-2.0 | 默认主干权重，由 `scripts/fetch_dinov2.py` 校验并打包 |
+| TorchVision ViT-B/16 (ImageNet-1K V1) `vit_b_16.pth` | BSD-3-Clause | 可选主干权重 |
+| TorchVision Wide-ResNet50-2 (ImageNet-1K V1) `wide_resnet50_2.pth` | BSD-3-Clause | 可选主干权重 |
 
-权重文件位于 `model/pretrained/wide_resnet50_2.pth`，SHA-256 见 `pretrained_manifest.json`。仅用于 ImageNet 通用预训练特征提取，符合校赛"允许使用通用预训练权重"的规定。
+## 方法参考（未复制代码，仅参考算法思想）
 
-## 3. 算法参考与再实现
+- PatchCore 方法参考 anomalib 技术路线（OpenVINO/anomalib，Apache-2.0）。
+  本提交包实现为 torch 原生独立实现（`src/patchcore/`），未包含 anomalib 源码。
 
-- **PatchCore**：`Towards Total Recall in Industrial Anomaly Detection`（Roth et al., CVPR 2022）。本提交的 `src/patchcore/` 为该方法的 **torch 原生再实现**（未直接复制参考源码），对齐其技术路线：
-  - 主干特征（wide_resnet50_2 layer2/layer3）+ 3×3 邻域聚合
-  - k-center greedy coreset 采样（coreset_ratio=0.1）
-  - 最近邻 L2 距离 → 上采样 + 高斯平滑 → [0,1] 异常分数
-- **anomalib**（Apache-2.0）：开发阶段作为行为对齐的参考实现；本提交包不含 anomalib 代码。
-- 参考仓库：`amazon-science/patchcore-inspection`（Apache-2.0）。
+## 说明
 
-本实现全部代码（`src/` 下各 `.py` 文件）均为本队原创，文件头以 SPDX 标注 `Apache-2.0`；因未复制第三方源码，故提交包不包含任何第三方源码副本。
-
-## 4. 生成方式
-
-- `requirements.lock`：由开发环境 `pip freeze` 裁剪而来，仅保留代码实际 import 的包。
-- `pretrained_manifest.json`：SHA-256 由本地 `model/pretrained/wide_resnet50_2.pth` 实测生成。
+- 评测平台预装环境或随包权重之外的任何组件均不被本提交包引入或触发下载。
+- 若正式评测环境对某个预装依赖的版本有差异，以评测平台实际环境为准；
+  `requirements.lock` 仅为本机验证版本，见其头部注释。

@@ -9,7 +9,7 @@
 ## 方案概述
 
 - **方法**：PatchCore（对齐 anomalib 技术路线），无监督，只用各类别 `train/good` 正常样本。
-  - 主干 `wide_resnet50_2`，取 layer2 + layer3 特征拼接（多尺度），3×3 邻域聚合 → 1536 维 patch 特征。
+  - 主干 `dinov2_vitl14`（标准 DINOv2 ViT-L/14，自监督 LVD-142M + 4 寄存器 token，torch 原生实现），取第 6/12/18 层（25%/50%/75%）Transformer block 特征，token 重排为 37×37 网格 + 3×3 邻域聚合 → 3072 维 patch 特征。
   - 每类正常样本建 memory bank，k-center greedy coreset 采样（`coreset_ratio=0.1`）。
   - 推理：patch 特征与所属类别 bank 的最近邻 L2 距离 → 热图（上采样 + 高斯平滑 `sigma=4`）→ 压缩到 `[0,1]`。
 - **模型模式**：`hybrid`（共享主干 `shared.pth` + 每类 bank `checkpoints/<category>.pth`）。
@@ -33,7 +33,7 @@ TeamName.zip
 │   ├── model_manifest.json
 │   ├── shared.pth          # 共享主干 state_dict
 │   ├── checkpoints/<category>.pth   # 每类 memory bank
-│   └── pretrained/wide_resnet50_2.pth  # ImageNet 权重（断网训练必需）
+│   └── pretrained/dinov2_vitl14.pth     # DINOv2 权重（断网训练必需，提交前必打包）
 ├── pretrained_manifest.json          # 预训练权重来源与哈希
 └── third_party/
     └── LICENSES.md
@@ -59,7 +59,9 @@ python -u src/train.py \
 
 - 严格按 manifest 读取正常训练图像，不访问 test / ground_truth，支持任意类别子集。
 - 产物写入 `--output-dir`：`shared.pth` + `checkpoints/<category>.pth` + `model_manifest.json`，不覆盖提交包内原始 `model/`。
-- 预训练权重：`model/pretrained/wide_resnet50_2.pth` 随包存放，断网环境下直接加载；首次在联网开发机上运行会自动下载缓存到该位置。
+- 预训练权重：`model/pretrained/dinov2_vitl14.pth` 随包存放，断网环境下直接加载。提交前必须用
+  `scripts/fetch_dinov2.py` 在联网开发机下载并放入该位置（评测环境断网，不允许运行时下载）；
+  首次在联网开发机上以默认主干运行 `train.py` 前也请先执行该脚本。
 
 ## 推理（规范 §7）
 
@@ -102,7 +104,7 @@ python src/evaluate.py --predictions-dir work/predictions \
 ## 提交前自检（规范 §12）
 
 - [ ] `submission.json` 的 `team_id` 已改为组委会匿名编号
-- [ ] `model/` 为真实训练产物，`model/pretrained/` 是真实 ImageNet 权重（非占位）
+- [ ] `model/` 为真实训练产物，`model/pretrained/dinov2_vitl14.pth` 为真实 DINOv2 权重且已随包（非占位）
 - [ ] `pretrained_manifest.json`、`third_party/LICENSES.md`、`report.pdf` 已补齐
 - [ ] zip 根目录直接含 `submission.json`，无嵌套目录
 - [ ] 代码 / 报告 / commit 中无学校信息、绝对路径、盘符

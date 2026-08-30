@@ -1,0 +1,42 @@
+{
+  "format_version": "omniad-school-model-1.0",
+  "model_mode": "hybrid",
+  "checkpoint": "shared.pth",
+  "checkpoint_pattern": "checkpoints/{category}.pth",
+  "categories": [
+    "air_conditioner_filter",
+    "battery_piece",
+    "battery_tab2",
+    "button1",
+    "capacitor1",
+    "capacitor3",
+    "ceramic_wafer",
+    "character_string",
+    "chip1",
+    "cloth3",
+    "coffee_cup_lid1",
+    "dumplings2",
+    "ice_cream_stick",
+    "infusion_bottle_bottom5",
+    "infusion_pipe_interface2",
+    "iron_lattice",
+    "led",
+    "lunch_box_lid",
+    "nameplate7",
+    "remote_control",
+    "resistance13",
+    "screw_thread",
+    "silicon_piece1",
+    "solar_panel",
+    "spindle_top",
+    "wafer2",
+    "webbing",
+    "work_piece12",
+    "work_piece14",
+    "work_piece7"
+  ],
+  "score_range": [
+    0.0,
+    1.0
+  ]
+}

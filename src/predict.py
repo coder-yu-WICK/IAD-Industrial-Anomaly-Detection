@@ -57,8 +57,16 @@ def read_manifest(path: Path) -> list[dict]:
 
 
 def load_model(model_dir: Path, device: torch.device):
-    """加载共享主干 + 按类别懒加载 memory bank。"""
-    model = PatchCore(device=device)
+    """加载共享主干 + 按类别懒加载 memory bank。
+
+    主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构，
+    此处默认使用与 train.py 一致的 dinov2_vitl14）。
+    """
+    model = PatchCore(
+        device=device,
+        backbone="dinov2_vitl14",
+        layers=("blocks.6", "blocks.12", "blocks.18"),
+    )
 
     shared = model_dir / "shared.pth"
     if not shared.exists():
@@ -66,6 +74,17 @@ def load_model(model_dir: Path, device: torch.device):
             f"模型目录缺少 shared.pth: {model_dir}（请检查 --model-dir）"
         )
     model.load_shared(shared)
+
+    # 优先 ONNX 加速；缺失 .onnx 或 onnxruntime 不可用时回退 PyTorch 主干
+    onnx_path = model_dir / "shared.onnx"
+    if onnx_path.exists():
+        try:
+            model.load_onnx(onnx_path)
+            print(f"[predict] 使用 ONNX 加速: {onnx_path}", flush=True)
+        except Exception as exc:  # onnxruntime 未安装 / 版本不兼容等
+            print(f"[predict] ONNX 加载失败({type(exc).__name__})，回退 PyTorch 推理", flush=True)
+    else:
+        print("[predict] 未找到 shared.onnx，使用 PyTorch 主干推理", flush=True)
 
     banks: dict[str, dict] = {}
 
