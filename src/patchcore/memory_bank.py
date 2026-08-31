@@ -1,9 +1,17 @@
 # Copyright (C) 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Memory bank：coreset 特征存储、归一化 scale、分块最近邻查询。"""
+"""Memory bank：coreset 特征存储、归一化 scale、分块最近邻查询。
+
+支持两种打分模式：
+  - 标准 PatchCore：单全局 bank，query 逐 patch 对全 bank 做 cdist 最近邻（CUDA 半精度 GEMM 加速）。
+  - PA-PatchCore（position-aware）：按空间位置建 bank，query 每个 patch 只在其邻域位置的
+    bank 里找最近邻（缓解目标轻微偏移/错位），距离用逐元素 L2（比 cdist 展开式更稳）。
+"""
 
 from __future__ import annotations
+
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -25,7 +33,7 @@ class MemoryBank:
     """存储 coreset 特征并提供分块最近邻查询。
 
     Args:
-        bank_dict: 可序列化 bank dict（bank / norm_scale 等）。
+        bank_dict: 可序列化 bank dict（bank / norm_scale / 可选 position_aware 等）。
         device: 查询设备；None 表示留在原始设备。
         inference_dtype: 半精度开关（None → CUDA 默认 FP16 查询；"float32" 禁用）。
     """
@@ -35,12 +43,45 @@ class MemoryBank:
         self.inference_dtype = inference_dtype
         self.bank = torch.from_numpy(np.asarray(bank_dict["bank"], dtype=np.float32))
         self.norm_scale = float(bank_dict.get("norm_scale") or 1.0)
+        self.position_aware = bool(bank_dict.get("position_aware", False))
         self._bank_half = None
+        self._cand_idx = None
+        self._seg = None
         if self.device is not None:
             self.bank = self.bank.to(self.device)
             if resolve_inference_dtype(self.device.type, self.inference_dtype) != "float32":
                 # 半精度 bank：kNN GEMM 走 tensor core；距离仍以 FP32 输出，打分路径不变
                 self._bank_half = self.bank.half()
+        if self.position_aware:
+            self._build_neighborhood(bank_dict)
+
+    def _build_neighborhood(self, bank_dict: dict) -> None:
+        """预计算邻域候选：每个 query 位置 → 其邻域位置内所有 bank 行索引。"""
+        h, w = bank_dict["grid"]
+        nb = int(bank_dict.get("nb_size", 3))
+        r = nb // 2
+        n_patches = h * w
+        bank_pos = torch.from_numpy(np.asarray(bank_dict["bank_pos"], dtype=np.int64))
+        if self.device is not None:
+            bank_pos = bank_pos.to(self.device)
+        self.bank_pos = bank_pos
+        # 每个位置 → 该位置的 bank 行索引（对称：3×3 邻域 q∈N(p) ⟺ p∈N(q)）
+        rows_by_pos: dict[int, list[int]] = defaultdict(list)
+        for k, pk in enumerate(bank_pos.tolist()):
+            rows_by_pos[pk].append(k)
+        cand_idx: list[int] = []
+        seg: list[int] = []
+        for q in range(n_patches):
+            i, j = q // w, q % w
+            for di in range(-r, r + 1):
+                for dj in range(-r, r + 1):
+                    ni, nj = i + di, j + dj
+                    if 0 <= ni < h and 0 <= nj < w:
+                        for row in rows_by_pos.get(ni * w + nj, ()):
+                            cand_idx.append(row)
+                            seg.append(q)
+        self._cand_idx = torch.tensor(cand_idx, dtype=torch.long, device=self.device)
+        self._seg = torch.tensor(seg, dtype=torch.long, device=self.device)
 
     def nearest_dist(self, query: torch.Tensor, chunk: int = 1024) -> torch.Tensor:
         """query (nq, C) → (nq,) 最近邻距离；分块 cdist 控制峰值显存。
@@ -50,6 +91,8 @@ class MemoryBank:
         """
         if self.device is not None:
             query = query.to(self.device)
+        if self.position_aware:
+            return self._nearest_dist_pa(query)
         bank = self._bank_half if self._bank_half is not None else self.bank
         q = query.half() if self._bank_half is not None else query
         out = []
@@ -57,3 +100,12 @@ class MemoryBank:
             d = torch.cdist(q[i : i + chunk], bank, compute_mode="use_mm_for_euclid_dist").float()
             out.append(d.min(dim=1).values)
         return torch.cat(out)
+
+    def _nearest_dist_pa(self, query: torch.Tensor) -> torch.Tensor:
+        """position-aware 邻域最近邻：逐元素 L2 + 分段 min（FP32，量级小无需半精度）。"""
+        q_e = query[self._seg]            # (ncand, C)
+        b_e = self.bank[self._cand_idx]   # (ncand, C)
+        d = (q_e - b_e).square().sum(dim=1).sqrt()
+        out = torch.full((query.shape[0],), float("inf"), dtype=torch.float32, device=self.device)
+        out.index_reduce_(0, self._seg, d, reduce="amin", include_self=True)
+        return out

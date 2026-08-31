@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from patchcore import PatchCore, write_manifest
+from patchcore import PatchCore, PatchCorePA, write_manifest
 
 
 # 主干配置：默认 dinov2_vitl14（DINOv2 ViT-L/14，自监督 LVD-142M + 4 寄存器，1024 维）。
@@ -65,6 +65,10 @@ def parse_args() -> argparse.Namespace:
                         help="中心裁剪 (H W)，默认 448 448；低显存用 224 224")
     parser.add_argument("--max-embed", type=int, default=MAX_EMBED,
                         help="coreset 前随机子采样 patch 上限（默认 200000，越大 bank 越全但越慢）")
+    parser.add_argument("--position-aware", action="store_true",
+                        help="使用 PA-PatchCore：position-wise 自适应 coreset bank + 邻域打分")
+    parser.add_argument("--nb-size", type=int, default=3,
+                        help="PA-PatchCore 邻域边长（奇数，默认 3=3×3 邻域，含自身）")
     return parser.parse_args()
 
 
@@ -141,7 +145,8 @@ def main() -> None:
         )
 
     # 共享主干：离线加载必须把 state_dict 写入产物
-    model = PatchCore(
+    model_cls = PatchCorePA if args.position_aware else PatchCore
+    model = model_cls(
         device=device,
         backbone=args.backbone,
         layers=tuple(args.layers),
@@ -156,7 +161,7 @@ def main() -> None:
     for category in categories:
         paths = by_category[category]
         print(f"[train] category={category} samples={len(paths)}", flush=True)
-        bank_dict = model.fit(paths)
+        bank_dict = model.fit(paths) if not args.position_aware else model.fit(paths, nb_size=args.nb_size)
         model.save_category(
             args.output_dir / "checkpoints" / f"{category}.pth",
             category=category,

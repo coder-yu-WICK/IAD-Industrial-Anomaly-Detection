@@ -18,6 +18,7 @@ from .memory_bank import MemoryBank
 from .manifest import write_manifest
 from .model import PatchCore, Prediction
 from .onnx import OnnxBackbone
+from .pa_patchcore import PatchCorePA
 from .preprocess import PatchPreprocess
 from .threshold import F1AdaptiveThreshold
 
@@ -29,6 +30,7 @@ __all__ = [
     "OnnxBackbone",
     "PatchBackbone",
     "PatchCore",
+    "PatchCorePA",
     "PatchFeatureExtractor",
     "PatchPreprocess",
     "Prediction",
