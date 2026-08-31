@@ -49,8 +49,9 @@ class MemoryBank:
         self._seg = None
         if self.device is not None:
             self.bank = self.bank.to(self.device)
-            if resolve_inference_dtype(self.device.type, self.inference_dtype) != "float32":
+            if not self.position_aware and resolve_inference_dtype(self.device.type, self.inference_dtype) != "float32":
                 # 半精度 bank：kNN GEMM 走 tensor core；距离仍以 FP32 输出，打分路径不变
+                # （PA 打分走 FP32 逐元素 L2，无需半精度 bank，省一半显存）
                 self._bank_half = self.bank.half()
         if self.position_aware:
             self._build_neighborhood(bank_dict)
@@ -101,11 +102,20 @@ class MemoryBank:
             out.append(d.min(dim=1).values)
         return torch.cat(out)
 
-    def _nearest_dist_pa(self, query: torch.Tensor) -> torch.Tensor:
-        """position-aware 邻域最近邻：逐元素 L2 + 分段 min（FP32，量级小无需半精度）。"""
-        q_e = query[self._seg]            # (ncand, C)
-        b_e = self.bank[self._cand_idx]   # (ncand, C)
-        d = (q_e - b_e).square().sum(dim=1).sqrt()
+    def _nearest_dist_pa(self, query: torch.Tensor, chunk: int = 8192) -> torch.Tensor:
+        """position-aware 邻域最近邻：逐元素 L2 + 分段 min（FP32，量级小无需半精度）。
+
+        候选总数可达 9×K（每 query 位置 → 其邻域内所有 bank 行），一次性物化
+        ``(候选数, C)`` 展开张量会 OOM，故按候选数分块、块内 ``index_reduce_`` 累积。
+        """
         out = torch.full((query.shape[0],), float("inf"), dtype=torch.float32, device=self.device)
-        out.index_reduce_(0, self._seg, d, reduce="amin", include_self=True)
+        seg = self._seg
+        cand = self._cand_idx
+        for i in range(0, seg.shape[0], chunk):
+            s = seg[i : i + chunk]
+            c = cand[i : i + chunk]
+            q_e = query[s]
+            b_e = self.bank[c]
+            d = (q_e - b_e).square().sum(dim=1).sqrt()
+            out.index_reduce_(0, s, d, reduce="amin", include_self=True)
         return out
