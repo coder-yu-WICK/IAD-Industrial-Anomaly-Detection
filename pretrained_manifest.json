@@ -1,6 +1,6 @@
 {
   "format_version": "omniad-school-pretrained-1.0",
-  "notes": "bundled=false 的条目为 train.py 可选/默认主干在联网开发机上首次运行前必须手动下载并随包存放的权重（评测断网，禁止运行时下载）。default 主干 dinov2_vitl14 的权重 dinov2_vitl14.pth 提交前必须放入 model/pretrained/，否则断网重训失败。",
+  "notes": "本提交包只使用 DINOv2 ViT-L/14 一种公开预训练权重。dinov2_vitl14.pth 提交前必须放入 model/pretrained/（评测断网，禁止运行时下载），用于 train.py 断网重训。",
   "entries": [
     {
       "name": "dinov2_vitl14_lvd142m",
@@ -9,62 +9,9 @@
       "sha256": "52ce2ee2988236b02d8d8bff9c17b6bf768d8f49f3292827161538d900d487b5",
       "local_path": "model/pretrained/dinov2_vitl14.pth",
       "license": "Apache-2.0",
-      "bundled": false,
+      "bundled": true,
       "fetch_hint": "scripts/fetch_dinov2.py",
       "usage": "src/train.py 默认主干（--backbone dinov2_vitl14），仅作特征提取器，训练阶段冻结"
-    },
-    {
-      "name": "vit_b_16_imagenet1k",
-      "description": "TorchVision ViT-B/16 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
-      "source_url": "https://download.pytorch.org/models/vit_b_16-c867db91.pth",
-      "sha256": "3939cc674f88e1e234fc49244b05aa8fd75daa39b62d2a1e2f818ec098203904",
-      "local_path": "model/pretrained/vit_b_16.pth",
-      "license": "BSD-3-Clause",
-      "bundled": true,
-      "usage": "src/train.py 可选主干（--backbone vit_b_16），仅作特征提取器，训练阶段冻结"
-    },
-    {
-      "name": "wide_resnet50_2_imagenet1k",
-      "description": "TorchVision Wide-ResNet50-2 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
-      "source_url": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
-      "sha256": "deece3e917e6b4cd13b82e1543391a6b066042760b56fcfc28ccb52e76ba2b93",
-      "local_path": "model/pretrained/wide_resnet50_2.pth",
-      "license": "BSD-3-Clause",
-      "bundled": true,
-      "usage": "src/train.py 可选主干（--backbone wide_resnet50_2），仅作特征提取器，训练阶段冻结"
-    },
-    {
-      "name": "swin_t_imagenet1k",
-      "description": "TorchVision Swin-T 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
-      "source_url": "https://download.pytorch.org/models/swin_t-704ceda3.pth",
-      "sha256": "704ceda373461b0a224fcdddd75cd2a5e9f8064512ed47adbddef7f343fd147b",
-      "local_path": "model/pretrained/swin_t.pth",
-      "license": "Apache-2.0",
-      "bundled": false,
-      "fetch_hint": "先在本机联网运行 src/train.py 自动缓存，或手动下载后放入 model/pretrained/",
-      "usage": "src/train.py 可选主干（--backbone swin_t），仅作特征提取器，训练阶段冻结"
-    },
-    {
-      "name": "swin_s_imagenet1k",
-      "description": "TorchVision Swin-S 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
-      "source_url": "https://download.pytorch.org/models/swin_s-5e29d889.pth",
-      "sha256": "5e29d889356a51648611f542380eb4f3c4b4c84dc61933cdfbd2afc14a8235b2",
-      "local_path": "model/pretrained/swin_s.pth",
-      "license": "Apache-2.0",
-      "bundled": false,
-      "fetch_hint": "先在本机联网运行 src/train.py 自动缓存，或手动下载后放入 model/pretrained/",
-      "usage": "src/train.py 可选主干（--backbone swin_s），仅作特征提取器，训练阶段冻结"
-    },
-    {
-      "name": "swin_b_imagenet1k",
-      "description": "TorchVision Swin-B 主干在 ImageNet-1K 上的预训练权重（ImageNet-1K V1）",
-      "source_url": "https://download.pytorch.org/models/swin_b-68c6b09e.pth",
-      "sha256": "68c6b09e73c66f27db19af59df563497fac4fc7889e42d82a0858b32c451a893",
-      "local_path": "model/pretrained/swin_b.pth",
-      "license": "Apache-2.0",
-      "bundled": false,
-      "fetch_hint": "先在本机联网运行 src/train.py 自动缓存，或手动下载后放入 model/pretrained/",
-      "usage": "src/train.py 可选主干（--backbone swin_b），仅作特征提取器，训练阶段冻结"
     }
   ]
 }
