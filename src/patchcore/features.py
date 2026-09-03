@@ -39,7 +39,11 @@ class PatchFeatureExtractor:
         return self.aggregate(named)
 
     def aggregate(self, features: dict[str, Tensor]) -> Tensor:
-        """输入 {layer: (1, C, h, w)} → 对齐 + 3×3 池化 + 拼接 → (ΣC, h, w)。"""
+        """输入 {layer: (1, C, h, w)} → 对齐 + 3×3 池化 + 拼接 + L2 归一化 → (ΣC, h, w)。
+
+        每个 patch 向量沿通道维做 L2 归一化，把欧氏最近邻等价为余弦相似度——
+        对 DINOv2 这类高维 Transformer 特征更稳定（不受向量模长影响）。
+        """
         ref = features[self.layers[0]]
         pooled = []
         for name in self.layers:
@@ -47,4 +51,5 @@ class PatchFeatureExtractor:
             if f.shape[-2:] != ref.shape[-2:]:
                 f = F.interpolate(f, size=ref.shape[-2:], mode="bilinear", align_corners=False)
             pooled.append(self.pool(f))
-        return torch.cat(pooled, dim=1)[0]
+        out = torch.cat(pooled, dim=1)[0]  # (ΣC, h, w)
+        return F.normalize(out, p=2, dim=0)  # 每个 patch 向量单位化

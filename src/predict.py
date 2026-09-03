@@ -40,6 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, required=True)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--topk-ratio", type=float, default=0.01,
+                        help="图像级分数 top-k 均值比例（0 退化为 max）")
+    parser.add_argument("--tta", action=argparse.BooleanOptionalAction, default=True,
+                        help="测试时增强：原图+水平翻+垂直翻+180° 四视角热图平均（默认开，推理 ×4）；"
+                             "--no-tta 关闭以符合部署 100ms 限时")
     return parser.parse_args()
 
 
@@ -56,7 +61,7 @@ def read_manifest(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def load_model(model_dir: Path, device: torch.device):
+def load_model(model_dir: Path, device: torch.device, topk_ratio: float = 0.01):
     """加载共享主干 + 按类别懒加载 memory bank。
 
     主干/层以 shared.pth 中记录的为准（load_shared 会自动重建匹配的架构，
@@ -66,6 +71,7 @@ def load_model(model_dir: Path, device: torch.device):
         device=device,
         backbone="dinov2_vitl14",
         layers=("blocks.6", "blocks.12", "blocks.18"),
+        score_topk_ratio=topk_ratio,
     )
 
     shared = model_dir / "shared.pth"
@@ -101,6 +107,33 @@ def load_model(model_dir: Path, device: torch.device):
     return model, get_bank
 
 
+def predict_tta(model: PatchCore, img) -> np.ndarray:
+    """四视角测试时增强：原图 + 水平翻 + 垂直翻 + 180°，热图翻转对齐后平均。
+
+    每个视角单独前向、热图立即转 CPU numpy，四视角不叠加显存，
+    峰值与单次推理一致（仅墙钟时间 ×4）。
+    """
+    from PIL import Image as PILImage
+
+    views = [
+        ("none", img),
+        ("hflip", img.transpose(PILImage.FLIP_LEFT_RIGHT)),
+        ("vflip", img.transpose(PILImage.FLIP_TOP_BOTTOM)),
+        ("180", img.transpose(PILImage.ROTATE_180)),
+    ]
+    maps = []
+    for name, view in views:
+        m = model.predict_map(view)
+        if name == "hflip":
+            m = m[:, ::-1]
+        elif name == "vflip":
+            m = m[::-1, :]
+        elif name == "180":
+            m = m[::-1, ::-1]
+        maps.append(m)
+    return np.mean(np.stack(maps), axis=0)
+
+
 def save_map_uint16(path: Path, anomaly_map: np.ndarray) -> None:
     """保存单通道 16-bit PNG（0~65535，与原图同尺寸）。
 
@@ -122,7 +155,7 @@ def main() -> None:
     maps_dir.mkdir(exist_ok=True)
 
     samples = read_manifest(args.manifest)
-    model, get_bank = load_model(args.model_dir, device)
+    model, get_bank = load_model(args.model_dir, device, topk_ratio=args.topk_ratio)
 
     from PIL import Image
 
@@ -134,11 +167,17 @@ def main() -> None:
 
         img = Image.open(image_path).convert("RGB")
         get_bank(category)
-        pred = model.predict(img)
+        if args.tta:
+            anomaly_map = predict_tta(model, img)
+            image_score = model.score_from_map(anomaly_map)
+        else:
+            pred = model.predict(img)
+            anomaly_map = pred.anomaly_map
+            image_score = pred.image_score
 
-        save_map_uint16(maps_dir / f"{sample_id}.png", pred.anomaly_map)
-        predictions.append((sample_id, pred.image_score))
-        print(f"[predict] {sample_id} ({category}) score={pred.image_score:.6f}", flush=True)
+        save_map_uint16(maps_dir / f"{sample_id}.png", anomaly_map)
+        predictions.append((sample_id, image_score))
+        print(f"[predict] {sample_id} ({category}) score={image_score:.6f}", flush=True)
 
     # predictions.csv
     with (args.output_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as f:

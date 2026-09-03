@@ -25,7 +25,7 @@ from .threshold import F1AdaptiveThreshold
 class Prediction:
     """单图推理结果。
 
-    image_score: 图像级分数 ∈ [0,1)，取热图最大值。
+    image_score: 图像级分数 ∈ [0,1)，取热图 top-k 均值（k 见 PatchCore.score_topk_ratio）。
     anomaly_map: 像素级热图 (H,W) float32 ∈ [0,1)，与原图同尺寸。
     pred_label / pred_mask: 调用 ``fit_threshold`` 后才有；否则为 None。
     """
@@ -46,6 +46,7 @@ class PatchCore:
         layers: 特征层名序列，如 ("blocks.6", "blocks.12", "blocks.18") 或 ("layer2", "layer3")。
         coreset_ratio: coreset 采样比例。bank 大小 = ratio × patch 总数，
             直接决定推理最近邻查询速度（调低即加速）。默认 0.1（参考口径）。
+        score_topk_ratio: 图像级分数 top-k 均值比例（0 退化为 max）。默认 0.01。
         max_embed: 可选 patch 子采样安全阀；None（默认）= 全量采样。
         input_size / crop_size: 预处理缩放 / 中心裁剪，默认 518 / 518。
         pretrained_path: 离线预训练权重路径（train 用）；None 时 predict 从 shared.pth 加载。
@@ -58,6 +59,7 @@ class PatchCore:
         backbone: str = "dinov2_vitl14",
         layers=("blocks.6", "blocks.12", "blocks.18"),
         coreset_ratio: float = 0.1,
+        score_topk_ratio: float = 0.01,
         max_embed: int | None = None,
         input_size=(518, 518),
         crop_size=(518, 518),
@@ -68,6 +70,7 @@ class PatchCore:
         self.backbone_name = backbone
         self.layers = tuple(layers)
         self.coreset_ratio = coreset_ratio
+        self.score_topk_ratio = score_topk_ratio
         self.max_embed = max_embed
         self.sigma = sigma
         self.backbone = PatchBackbone(device, pretrained_path=pretrained_path, name=backbone, layers=self.layers)
@@ -119,12 +122,20 @@ class PatchCore:
             "crop_size": list(self.preprocess.crop_size),
             "sigma": self.sigma,
         }
+        # 全量 patch 特征只用于建 bank，之后立刻释放，控制跨类别训练显存峰值
+        del all_feats, bank
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
         self._bank = None
         return self.bank_dict
 
     # ------------------------------------------------------------------ 推理
-    def predict(self, image: Image.Image) -> Prediction:
-        """单图推理。预处理/平滑参数一律从 bank_dict 重建，保证与训练一致。"""
+    def predict_map(self, image: Image.Image) -> np.ndarray:
+        """单图推理，返回像素级异常图 (H, W) float32 ∈ [0,1)，不含图像级分数。
+
+        与 ``predict`` 拆开：多视角 TTA 可对每视角热图翻转对齐后平均，
+        再用 ``score_from_map`` 统一汇总图像级分数。预处理/平滑参数从 bank_dict 重建。
+        """
         if self.bank_dict is None:
             raise RuntimeError("未设置 bank（先调用 fit 或 load_category）")
         if self._bank is None:
@@ -147,12 +158,27 @@ class PatchCore:
         q = patch.reshape(patch.shape[0], -1).T  # (h*w, C)
         dist = self._bank.nearest_dist(q)  # (h*w,)
         score_map = dist.reshape(1, h, w)
-        score_map = map_gen(score_map, image.size[::-1])  # (1, H, W)
-        score_map = score_map[0]  # (H, W)
+        score_map = map_gen(score_map, image.size[::-1])[0]  # (H, W)
         score_map = 1.0 - torch.exp(-score_map / self._bank.norm_scale)
+        return score_map.cpu().numpy().astype(np.float32)
 
-        anomaly_map = score_map.cpu().numpy().astype(np.float32)
-        image_score = float(anomaly_map.max())
+    def score_from_map(self, anomaly_map: np.ndarray) -> float:
+        """图像级分数 = 异常图 top-k 均值（k = score_topk_ratio × 像素数，至少 1）。
+
+        用 top-k 均值替代单一 max：避免正常图里孤立噪声 patch 把分数顶高，
+        又比整图均值更能保留细微缺陷（裂痕/脏污）的局部峰值。
+        ``score_topk_ratio <= 0`` 退化为 max（A/B 对照用）。
+        """
+        flat = np.asarray(anomaly_map, dtype=np.float32).ravel()
+        if self.score_topk_ratio <= 0:
+            return float(flat.max())
+        k = max(1, int(flat.size * self.score_topk_ratio))
+        return float(np.partition(flat, -k)[-k:].mean())
+
+    def predict(self, image: Image.Image) -> Prediction:
+        """单图推理。返回图像级分数（top-k 均值）+ 像素级异常图。"""
+        anomaly_map = self.predict_map(image)
+        image_score = self.score_from_map(anomaly_map)
         pred = Prediction(image_score=image_score, anomaly_map=anomaly_map)
         if self.image_threshold is not None:
             pred.pred_label = int(image_score >= self.image_threshold)

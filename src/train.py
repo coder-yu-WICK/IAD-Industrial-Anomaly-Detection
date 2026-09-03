@@ -65,6 +65,9 @@ def parse_args() -> argparse.Namespace:
                         help="中心裁剪 (H W)，默认 448 448；低显存用 224 224")
     parser.add_argument("--max-embed", type=int, default=MAX_EMBED,
                         help="coreset 前随机子采样 patch 上限（默认 200000，越大 bank 越全但越慢）")
+    parser.add_argument("--coreset-ratio", type=float, default=0.3,
+                        help="coreset 采样比例（默认 0.3，比常规 0.1 更密、bank 更全）；"
+                             "显存/推理速度紧张时可调回 0.1")
     return parser.parse_args()
 
 
@@ -145,6 +148,7 @@ def main() -> None:
         device=device,
         backbone=args.backbone,
         layers=tuple(args.layers),
+        coreset_ratio=args.coreset_ratio,
         input_size=tuple(args.input_size),
         crop_size=tuple(args.crop_size),
         max_embed=args.max_embed,
