@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sam-surrounding-decay", type=float, default=0.35,
                    help="高相似度时 SAM 外部热度保留比例")
     p.add_argument("--disable-sam", action="store_true", help="仅用于无 SAM 依赖环境的回退测试")
+    p.add_argument("--visualize-category", type=str, default=None,
+                   help="输出该类别的原图/PatchCore/SAM/融合可视化，不指定则不输出")
+    p.add_argument("--visualize-dir", type=Path, default=None,
+                   help="可视化图片目录，默认 <output-dir>/visualizations")
     return p.parse_args()
 
 
@@ -127,11 +131,38 @@ def save_map_uint16(path: Path, anomaly_map: np.ndarray) -> None:
     Image.fromarray(u16).save(path)
 
 
+def save_visualization(path: Path, image: Image.Image, patch_map: np.ndarray,
+                       sam_mask: np.ndarray, fused_map: np.ndarray, miou: float) -> None:
+    """保存四联图：原图、PatchCore、SAM mask、融合热力图。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5), constrained_layout=True)
+    rgb = np.asarray(image)
+    axes[0].imshow(rgb); axes[0].set_title("Original")
+    axes[1].imshow(rgb); axes[1].imshow(patch_map, cmap="jet", alpha=0.55, vmin=0, vmax=1)
+    axes[1].set_title("PatchCore heatmap")
+    axes[2].imshow(rgb); axes[2].imshow(sam_mask, cmap="spring", alpha=0.55, vmin=0, vmax=1)
+    axes[2].set_title(f"SAM mask (mIoU={miou:.3f})")
+    axes[3].imshow(rgb); axes[3].imshow(fused_map, cmap="jet", alpha=0.55, vmin=0, vmax=1)
+    axes[3].set_title("Fused heatmap")
+    for ax in axes: ax.axis("off")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args(); set_seed(2026); device = torch.device(args.device)
     args.output_dir.mkdir(parents=True, exist_ok=True); (args.output_dir / "maps").mkdir(exist_ok=True)
     samples = read_manifest(args.manifest)
     if args.category: samples = [s for s in samples if s["category"] in set(args.category)]
+    if args.visualize_category:
+        samples = [s for s in samples if s["category"] == args.visualize_category]
+        if not samples:
+            raise ValueError(f"可视化类别不存在或没有样本: {args.visualize_category}")
+    visualize_dir = args.visualize_dir or (args.output_dir / "visualizations")
     model, get_bank = load_model(args.model_dir, device)
     generator = None if args.disable_sam else load_sam(args, device)
     predictions = []
@@ -160,6 +191,9 @@ def main() -> None:
                 sam_mask, miou = np.zeros(patch_pred.anomaly_map.shape, bool), 0.0
         fused = fuse_map(patch_pred.anomaly_map, sam_mask, miou, args.sam_iou_threshold, args.sam_surrounding_decay)
         save_map_uint16(args.output_dir / "maps" / f"{sid}.png", fused)
+        if args.visualize_category:
+            save_visualization(visualize_dir / f"{sid}.png", image,
+                               patch_pred.anomaly_map, sam_mask, fused, miou)
         score = float(fused.max()); predictions.append((sid, score))
         print(f"[predict] {sid} ({category}) patch={patch_pred.image_score:.5f} sam_mIoU={miou:.5f} score={score:.5f}", flush=True)
     with (args.output_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as f:

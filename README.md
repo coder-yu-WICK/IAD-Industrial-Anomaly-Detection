@@ -77,6 +77,8 @@ python -u src/predict.py \
 - 按 manifest 逐样本处理，不扫描完整数据目录；`--model-dir` 兼容提交包 `model/` 与 train.py 重训目录。
 - 默认并行运行 PatchCore 与 SAM；SAM 权重缺失时会下载到 `--model-dir/sam/`，也可用 `--sam-checkpoint` 指定本地权重。
 - 融合规则：计算 PatchCore 二值异常区域与 SAM 候选区域的 mIoU；mIoU 达到 `--sam-iou-threshold` 时将 SAM 区域置为异常并按 `--sam-surrounding-decay` 衰减外围，否则保留 PatchCore 原图。可用 `--category foo` 仅推理指定类别。
+- 可视化指定类别（输出原图、PatchCore 热力图、SAM mask、融合热力图四联图）：
+  `python src/predict.py ... --visualize-category air_conditioner_filter --visualize-dir work/visualizations`。
 - 产物：
   - `predictions.csv`：`sample_id,image_score`（∈[0,1]）
   - `maps/<sample_id>.png`：单通道 16-bit PNG（0~65535，/65535 得 [0,1] 分数），与原图同尺寸
