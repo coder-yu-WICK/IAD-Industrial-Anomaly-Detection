@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
         default=4096,
         help="像素分数直方图分箱数（越大越接近全量精确，内存仍 O(1)；默认 4096）",
     )
+    parser.add_argument("--category", action="append", default=None,
+                        help="只评估指定类别；可重复传入，默认全部类别")
     return parser.parse_args()
 
 
@@ -136,8 +138,12 @@ def main() -> None:
     nbins = args.bins
 
     by_cat: dict[str, list[dict]] = defaultdict(list)
+    selected = set(args.category) if args.category else None
     for s in samples:
-        by_cat[s["category"]].append(s)
+        if selected is None or s["category"] in selected:
+            by_cat[s["category"]].append(s)
+    if not by_cat:
+        raise ValueError("没有匹配的评估类别")
 
     print(f"{'类别':<24}{'I-AP':>8}{'I-F1':>8}{'P-AP':>8}{'P-F1':>8}{'P-AUC':>8}")
     agg = {"I-AP": [], "I-F1": [], "P-AP": [], "P-F1": [], "P-AUC": []}

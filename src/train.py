@@ -65,6 +65,8 @@ def parse_args() -> argparse.Namespace:
                         help="中心裁剪 (H W)，默认 448 448；低显存用 224 224")
     parser.add_argument("--max-embed", type=int, default=MAX_EMBED,
                         help="coreset 前随机子采样 patch 上限（默认 200000，越大 bank 越全但越慢）")
+    parser.add_argument("--category", action="append", default=None,
+                        help="只训练指定类别；可重复传入，默认全部类别")
     return parser.parse_args()
 
 
@@ -139,6 +141,13 @@ def main() -> None:
         by_category.setdefault(row["category"], []).append(
             args.data_root / row["image_path"]
         )
+
+    if args.category:
+        selected = set(args.category)
+        by_category = {k: v for k, v in by_category.items() if k in selected}
+        missing = selected.difference(by_category)
+        if missing:
+            raise ValueError(f"训练清单中不存在类别: {', '.join(sorted(missing))}")
 
     # 共享主干：离线加载必须把 state_dict 写入产物
     model = PatchCore(
