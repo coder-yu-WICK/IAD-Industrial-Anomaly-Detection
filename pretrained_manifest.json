@@ -1,0 +1,17 @@
+{
+  "format_version": "omniad-school-pretrained-1.0",
+  "notes": "本提交包只使用 DINOv2 ViT-L/14 一种公开预训练权重。dinov2_vitl14.pth 提交前必须放入 model/pretrained/（评测断网，禁止运行时下载），用于 train.py 断网重训。",
+  "entries": [
+    {
+      "name": "dinov2_vitl14_lvd142m",
+      "description": "DINOv2 ViT-L/14 主干在 LVD-142M 上的自监督预训练权重（含 4 寄存器 token）——train.py 默认主干",
+      "source_url": "https://github.com/facebookresearch/dinov2 (torch.hub:dinov2_vitl14_reg)",
+      "sha256": "52ce2ee2988236b02d8d8bff9c17b6bf768d8f49f3292827161538d900d487b5",
+      "local_path": "model/pretrained/dinov2_vitl14.pth",
+      "license": "Apache-2.0",
+      "bundled": true,
+      "fetch_hint": "scripts/fetch_dinov2.py",
+      "usage": "src/train.py 默认主干（--backbone dinov2_vitl14），仅作特征提取器，训练阶段冻结"
+    }
+  ]
+}
