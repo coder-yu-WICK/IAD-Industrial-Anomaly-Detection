@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sam-checkpoint", type=Path, default=None)
     p.add_argument("--sam-model-type", choices=tuple(SAM_CHECKPOINT_URLS), default="vit_b")
     p.add_argument("--sam-iou-threshold", type=float, default=0.35,
-                   help="PatchCore 二值区域与 SAM 区域的 mIoU 阈值")
+                   help="兼容旧参数，不再用于筛选 SAM mask")
     p.add_argument("--patch-threshold", type=float, default=0.55,
                    help="PatchCore 热图二值化阈值")
     p.add_argument("--sam-surrounding-decay", type=float, default=0.35,
@@ -100,8 +100,12 @@ def load_sam(args: argparse.Namespace, device: torch.device):
     ensure_sam_checkpoint(checkpoint, args.sam_model_type)
     sam = sam_model_registry[args.sam_model_type](checkpoint=str(checkpoint)).to(device)
     sam.eval()
-    return SamAutomaticMaskGenerator(sam, points_per_side=16, pred_iou_thresh=0.86,
-                                     stability_score_thresh=0.90, min_mask_region_area=64)
+    return SamAutomaticMaskGenerator(
+        model=sam,
+        points_per_side=32,
+        pred_iou_thresh=0.86,
+        stability_score_thresh=0.92,
+    )
 
 
 def sam_mask_and_miou(generator, image: np.ndarray, patch_map: np.ndarray, threshold: float):
@@ -119,44 +123,53 @@ def sam_mask_and_miou(generator, image: np.ndarray, patch_map: np.ndarray, thres
     return best_mask, best_iou
 
 
-def fuse_map(patch_map: np.ndarray, sam_mask: np.ndarray, miou: float,
-             iou_threshold: float, surrounding_decay: float,
-             boundary_width: int = 5) -> np.ndarray:
-    """仅在 SAM 轮廓窄带内平滑 PatchCore 等值线。
+def fuse_map(patch_map: np.ndarray, sam_masks: list[np.ndarray],
+             surrounding_decay: float, boundary_width: int = 5,
+             min_gradient: float = 0.01) -> np.ndarray:
+    """让 PatchCore 热力图同时尊重所有 SAM mask 的边界。
 
-    热力图主体区域保持原值；SAM 不产生新异常、不覆盖整块 mask，只有
-    SAM 边界附近的局部值向邻域均值轻微靠拢，以平滑轮廓穿过的等值线。
+    不合并/筛选 SAM mask，也不把 mask 内部设为固定高分。每个 mask 的
+    轮廓都生成一个窄带约束；窄带内使用原始 PatchCore 邻域趋势插值，
+    并注入极小单调梯度，避免出现 ``0.1, 0.2, 0.2`` 这种平坦边界。
     """
     patch = np.clip(np.asarray(patch_map, dtype=np.float32), 0.0, 1.0)
-    if miou < iou_threshold or not np.any(sam_mask):
+    if not sam_masks:
         return patch.copy()
-
-    # scipy 是可选依赖；无 scipy 时退化为原图，避免改变 PatchCore 基线。
     try:
         from scipy.ndimage import distance_transform_edt, gaussian_filter
     except ImportError:
         return patch.copy()
 
-    mask = np.asarray(sam_mask, dtype=bool)
-    inside = distance_transform_edt(mask)
-    outside = distance_transform_edt(~mask)
     width = max(1, int(boundary_width))
-    # SAM 只定义“在哪里整形”：仅处理轮廓窄带，mask 内外主体区域完全不变。
-    # signed=0 近似 SAM 等值线；离轮廓越远，约束权重指数衰减到 0。
-    signed = inside - outside
-    boundary_weight = np.exp(-np.abs(signed) / float(width)).astype(np.float32)
-    boundary_weight[signed == 0] = 1.0
-    boundary_weight = gaussian_filter(boundary_weight, sigma=0.75)
-    # 严格截断为 SAM 轮廓两侧的窄带，窄带之外逐像素保持原始热力图。
-    boundary_weight[np.abs(signed) > width] = 0.0
-    boundary_weight = np.clip(boundary_weight, 0.0, 1.0)
-
-    # 用局部高斯等值线作为目标，只在 SAM 轮廓附近做小幅平滑。
-    # 轮廓外的整张热力图保持原值，不会注入新的异常区域或改变全局分数。
     strength = float(np.clip(surrounding_decay, 0.0, 1.0))
-    local_target = gaussian_filter(patch, sigma=max(0.5, width / 3.0))
-    alpha = strength * boundary_weight
-    fused = patch + alpha * (local_target - patch)
+    fused = patch.copy()
+    yy, xx = np.indices(patch.shape, dtype=np.float32)
+    for raw_mask in sam_masks:
+        mask = np.asarray(raw_mask, dtype=bool)
+        if mask.shape != patch.shape or not mask.any() or mask.all():
+            continue
+        inside = distance_transform_edt(mask)
+        outside = distance_transform_edt(~mask)
+        signed = inside - outside
+        distance = np.abs(signed)
+        band = distance <= width
+        if not band.any():
+            continue
+        # 每个 SAM 轮廓独立约束，之后取平均，确保所有边界共同生效。
+        local = gaussian_filter(fused, sigma=max(0.5, width / 3.0))
+        # signed 从外到内单调增加，形成 SAM 等值线的连续过渡。
+        t = np.clip(0.5 + signed / (2.0 * width), 0.0, 1.0)
+        # 让边界两侧保持原图趋势，同时避免边界梯度为零。
+        scale = max(float(np.ptp(fused[band])), min_gradient * width)
+        target = np.clip(local + (t - 0.5) * scale, 0.0, 1.0)
+        alpha = strength * np.exp(-distance / max(1.0, width)).astype(np.float32)
+        alpha[~band] = 0.0
+        fused = fused + alpha * (target - fused)
+        # 强制边界带沿法向保持非递减，防止相邻等值线塌平。
+        order = np.argsort(distance[band])
+        vals = fused[band].ravel()[order]
+        vals = np.maximum.accumulate(vals + np.arange(vals.size, dtype=np.float32) * min_gradient / max(1, vals.size))
+        fused[band] = np.clip(vals[np.argsort(order)], 0.0, 1.0)
     return np.clip(fused, 0.0, 1.0).astype(np.float32)
 
 
@@ -212,20 +225,20 @@ def main() -> None:
             patch_pred = patch_future.result()
             if sam_future:
                 sam_items = sam_future.result()
+                sam_masks = [np.asarray(item["segmentation"], dtype=bool) for item in sam_items]
+                # 仅用于日志，不参与筛选；所有 SAM mask 都会进入边界融合。
                 patch_binary = patch_pred.anomaly_map >= args.patch_threshold
-                best_mask, miou = np.zeros(patch_binary.shape, bool), 0.0
-                for item in sam_items:
-                    mask = np.asarray(item["segmentation"], dtype=bool)
-                    inter = np.logical_and(mask, patch_binary).sum()
+                ious = []
+                for mask in sam_masks:
                     union = np.logical_or(mask, patch_binary).sum()
-                    iou = float(inter / union) if union else 0.0
-                    if iou > miou: best_mask, miou = mask, iou
-                sam_mask = best_mask
+                    ious.append(float(np.logical_and(mask, patch_binary).sum() / union) if union else 0.0)
+                sam_mask = np.logical_or.reduce(sam_masks) if sam_masks else np.zeros(patch_binary.shape, bool)
+                miou = float(np.mean(ious)) if ious else 0.0
             else:
-                sam_mask, miou = np.zeros(patch_pred.anomaly_map.shape, bool), 0.0
+                sam_masks, sam_mask, miou = [], np.zeros(patch_pred.anomaly_map.shape, bool), 0.0
         fused = fuse_map(
-            patch_pred.anomaly_map, sam_mask, miou, args.sam_iou_threshold,
-            args.sam_surrounding_decay, args.sam_boundary_width,
+            patch_pred.anomaly_map, sam_masks, args.sam_surrounding_decay,
+            args.sam_boundary_width,
         )
         save_map_uint16(args.output_dir / "maps" / f"{sid}.png", fused)
         if args.visualize_category:
