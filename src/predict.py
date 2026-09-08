@@ -122,11 +122,10 @@ def sam_mask_and_miou(generator, image: np.ndarray, patch_map: np.ndarray, thres
 def fuse_map(patch_map: np.ndarray, sam_mask: np.ndarray, miou: float,
              iou_threshold: float, surrounding_decay: float,
              boundary_width: int = 5) -> np.ndarray:
-    """用 SAM 轮廓调整 PatchCore 等值线，不把整块 SAM 区域变成异常。
+    """仅在 SAM 轮廓窄带内平滑 PatchCore 等值线。
 
-    SAM 只在轮廓窄带内作为空间先验：轮廓内外的 PatchCore 等值线向 SAM
-    边界平滑过渡；SAM mask 内部仍保留原始 PatchCore 分数，因此不会让
-    正常物体整块变成 1.0。
+    热力图主体区域保持原值；SAM 不产生新异常、不覆盖整块 mask，只有
+    SAM 边界附近的局部值向邻域均值轻微靠拢，以平滑轮廓穿过的等值线。
     """
     patch = np.clip(np.asarray(patch_map, dtype=np.float32), 0.0, 1.0)
     if miou < iou_threshold or not np.any(sam_mask):
@@ -142,17 +141,22 @@ def fuse_map(patch_map: np.ndarray, sam_mask: np.ndarray, miou: float,
     inside = distance_transform_edt(mask)
     outside = distance_transform_edt(~mask)
     width = max(1, int(boundary_width))
-    # t=0 在 SAM 外侧，t=1 在 SAM 内侧，等值线以 sigmoid 平滑。
+    # SAM 只定义“在哪里整形”：仅处理轮廓窄带，mask 内外主体区域完全不变。
+    # signed=0 近似 SAM 等值线；离轮廓越远，约束权重指数衰减到 0。
     signed = inside - outside
-    weight = np.clip(0.5 + signed / (2.0 * width), 0.0, 1.0)
-    weight = gaussian_filter(weight.astype(np.float32), sigma=max(0.5, width / 3.0))
-    weight = np.clip(weight, 0.0, 1.0)
+    boundary_weight = np.exp(-np.abs(signed) / float(width)).astype(np.float32)
+    boundary_weight[signed == 0] = 1.0
+    boundary_weight = gaussian_filter(boundary_weight, sigma=0.75)
+    # 严格截断为 SAM 轮廓两侧的窄带，窄带之外逐像素保持原始热力图。
+    boundary_weight[np.abs(signed) > width] = 0.0
+    boundary_weight = np.clip(boundary_weight, 0.0, 1.0)
 
-    # 仅把 PatchCore 的局部高分向轮廓轻微扩展/收缩，绝不注入固定高分。
-    # surrounding_decay=0 时不调整；值越大，等值线约束越强。
+    # 用局部高斯等值线作为目标，只在 SAM 轮廓附近做小幅平滑。
+    # 轮廓外的整张热力图保持原值，不会注入新的异常区域或改变全局分数。
     strength = float(np.clip(surrounding_decay, 0.0, 1.0))
-    boundary_target = gaussian_filter(patch.astype(np.float32), sigma=max(0.5, width / 2.0))
-    fused = patch * (1.0 - strength * weight) + boundary_target * (strength * weight)
+    local_target = gaussian_filter(patch, sigma=max(0.5, width / 3.0))
+    alpha = strength * boundary_weight
+    fused = patch + alpha * (local_target - patch)
     return np.clip(fused, 0.0, 1.0).astype(np.float32)
 
 
