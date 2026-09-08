@@ -41,7 +41,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patch-threshold", type=float, default=0.55,
                    help="PatchCore 热图二值化阈值")
     p.add_argument("--sam-surrounding-decay", type=float, default=0.35,
-                   help="高相似度时 SAM 外部热度保留比例")
+                   help="兼容旧参数：SAM 边界融合强度，0 不调整，1 完全贴合等值线")
+    p.add_argument("--sam-boundary-width", type=int, default=5,
+                   help="SAM 轮廓向内外平滑的像素宽度")
     p.add_argument("--disable-sam", action="store_true", help="仅用于无 SAM 依赖环境的回退测试")
     p.add_argument("--visualize-category", type=str, default=None,
                    help="输出该类别的原图/PatchCore/SAM/融合可视化，不指定则不输出")
@@ -118,11 +120,39 @@ def sam_mask_and_miou(generator, image: np.ndarray, patch_map: np.ndarray, thres
 
 
 def fuse_map(patch_map: np.ndarray, sam_mask: np.ndarray, miou: float,
-             iou_threshold: float, surrounding_decay: float) -> np.ndarray:
-    """高 mIoU 时以 SAM 区域补全异常，并衰减其外部；否则保留 PatchCore。"""
-    if miou < iou_threshold: return np.clip(patch_map, 0.0, 1.0).astype(np.float32)
-    fused = np.asarray(patch_map, dtype=np.float32).copy() * float(np.clip(surrounding_decay, 0, 1))
-    fused[sam_mask] = 1.0
+             iou_threshold: float, surrounding_decay: float,
+             boundary_width: int = 5) -> np.ndarray:
+    """用 SAM 轮廓调整 PatchCore 等值线，不把整块 SAM 区域变成异常。
+
+    SAM 只在轮廓窄带内作为空间先验：轮廓内外的 PatchCore 等值线向 SAM
+    边界平滑过渡；SAM mask 内部仍保留原始 PatchCore 分数，因此不会让
+    正常物体整块变成 1.0。
+    """
+    patch = np.clip(np.asarray(patch_map, dtype=np.float32), 0.0, 1.0)
+    if miou < iou_threshold or not np.any(sam_mask):
+        return patch.copy()
+
+    # scipy 是可选依赖；无 scipy 时退化为原图，避免改变 PatchCore 基线。
+    try:
+        from scipy.ndimage import distance_transform_edt, gaussian_filter
+    except ImportError:
+        return patch.copy()
+
+    mask = np.asarray(sam_mask, dtype=bool)
+    inside = distance_transform_edt(mask)
+    outside = distance_transform_edt(~mask)
+    width = max(1, int(boundary_width))
+    # t=0 在 SAM 外侧，t=1 在 SAM 内侧，等值线以 sigmoid 平滑。
+    signed = inside - outside
+    weight = np.clip(0.5 + signed / (2.0 * width), 0.0, 1.0)
+    weight = gaussian_filter(weight.astype(np.float32), sigma=max(0.5, width / 3.0))
+    weight = np.clip(weight, 0.0, 1.0)
+
+    # 仅把 PatchCore 的局部高分向轮廓轻微扩展/收缩，绝不注入固定高分。
+    # surrounding_decay=0 时不调整；值越大，等值线约束越强。
+    strength = float(np.clip(surrounding_decay, 0.0, 1.0))
+    boundary_target = gaussian_filter(patch.astype(np.float32), sigma=max(0.5, width / 2.0))
+    fused = patch * (1.0 - strength * weight) + boundary_target * (strength * weight)
     return np.clip(fused, 0.0, 1.0).astype(np.float32)
 
 
@@ -189,7 +219,10 @@ def main() -> None:
                 sam_mask = best_mask
             else:
                 sam_mask, miou = np.zeros(patch_pred.anomaly_map.shape, bool), 0.0
-        fused = fuse_map(patch_pred.anomaly_map, sam_mask, miou, args.sam_iou_threshold, args.sam_surrounding_decay)
+        fused = fuse_map(
+            patch_pred.anomaly_map, sam_mask, miou, args.sam_iou_threshold,
+            args.sam_surrounding_decay, args.sam_boundary_width,
+        )
         save_map_uint16(args.output_dir / "maps" / f"{sid}.png", fused)
         if args.visualize_category:
             save_visualization(visualize_dir / f"{sid}.png", image,
